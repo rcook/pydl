@@ -1,0 +1,221 @@
+//! `check-checksums <input-dir>` — verify every `<tag>.sha256sums` file in
+//! `<input-dir>` against what upstream currently serves.
+//!
+//! For each `<tag>.sha256sums` file on disc, GETs
+//! `https://github.com/astral-sh/python-build-standalone/releases/download/<tag>/SHA256SUMS`
+//! through the cache and asserts the bytes match. A mismatch means the
+//! committed checksum set disagrees with what GitHub is currently serving —
+//! either the file was edited post-release (suspicious) or the committed
+//! version was corrupted at PR time (also suspicious).
+//!
+//! This is a CI trip-wire, not a user-facing install step. It's the formal
+//! control the review-at-commit-time argument implies.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use clap::Parser;
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
+use log::{debug, info, warn};
+use pydl_cache::{CachingClient, Method, StatusCode};
+use pydl_common::{OWNER, REPO, make_client, min_freshness_secs};
+use tokio::fs;
+
+/// How many upstream fetches to have in flight concurrently. GitHub's
+/// release-asset CDN is fine with a handful of parallel requests; 8 cuts the
+/// wall-clock of a ~80-tag check roughly 8x on a cold cache without being
+/// aggressive enough to draw rate-limiting attention.
+const CONCURRENCY: usize = 8;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "check-checksums",
+    version,
+    about = "Verify every committed <tag>.sha256sums file matches upstream."
+)]
+struct Cli {
+    /// Directory containing `<tag>.sha256sums` files to check.
+    input_dir: PathBuf,
+
+    /// Log filter directive (overrides `RUST_LOG`). Accepts the same syntax
+    /// as `RUST_LOG`, e.g. `debug`, `pydl_cache=debug`.
+    #[arg(short = 'l', long = "log", value_name = "DIRECTIVE")]
+    log: Option<String>,
+}
+
+enum CheckError {
+    /// Non-OK HTTP status; caller may treat this as a soft warning rather
+    /// than a hard failure (old tags sometimes return 404 because upstream
+    /// never shipped a `SHA256SUMS` for that release).
+    Status(StatusCode),
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for CheckError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Other(e)
+    }
+}
+
+/// Outcome of a single tag check, paired with the tag for reporting.
+enum Outcome {
+    Match,
+    Mismatch,
+    FetchFailed(StatusCode),
+}
+
+/// Fetch upstream's `SHA256SUMS` for `tag` and compare against `embedded`.
+/// Returns `Ok(true)` on match, `Ok(false)` on mismatch (with a log line
+/// naming the tag) and `Err(CheckError::Status)` on a non-200 response.
+async fn check_one(
+    client: &CachingClient,
+    tag: &str,
+    embedded: &str,
+    url: &str,
+) -> Result<bool, CheckError> {
+    let (status, body) = client.request(Method::GET, url).await?;
+    if status != StatusCode::OK {
+        return Err(CheckError::Status(status));
+    }
+    let upstream = std::str::from_utf8(&body).map_err(|e| {
+        CheckError::Other(anyhow::anyhow!(
+            "upstream body for tag {tag} is not valid UTF-8: {e}"
+        ))
+    })?;
+    if upstream == embedded {
+        debug!("{tag}: match");
+        Ok(true)
+    } else {
+        log::error!(
+            "{tag}: committed checksums DISAGREE with upstream ({} vs {} bytes)",
+            embedded.len(),
+            upstream.len(),
+        );
+        Ok(false)
+    }
+}
+
+fn extract_tag(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let tag = name.strip_suffix(".sha256sums")?;
+    if tag.is_empty() {
+        return None;
+    }
+    Some(tag.to_owned())
+}
+
+async fn load_entries(input_dir: &Path) -> Result<Vec<(String, String)>> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut rd = fs::read_dir(input_dir)
+        .await
+        .with_context(|| format!("reading input dir {}", input_dir.display()))?;
+    while let Some(entry) = rd
+        .next_entry()
+        .await
+        .with_context(|| format!("iterating input dir {}", input_dir.display()))?
+    {
+        let path = entry.path();
+        let Some(tag) = extract_tag(&path) else {
+            continue;
+        };
+        let contents = fs::read_to_string(&path)
+            .await
+            .with_context(|| format!("reading {}", path.display()))?;
+        entries.push((tag, contents));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(entries)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    if let Some(directive) = cli.log.as_deref() {
+        env_logger::Builder::new().parse_filters(directive).init();
+    } else {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    }
+
+    let input_dir = cli.input_dir;
+
+    let min_freshness = min_freshness_secs()?;
+    debug!("cache min-freshness floor: {min_freshness}s");
+    info!("input dir: {}", input_dir.display());
+
+    let client = make_client("check-checksums/0.1", min_freshness)?;
+
+    let entries = load_entries(&input_dir).await?;
+    info!(
+        "checking {} committed checksum file(s) with concurrency={CONCURRENCY}",
+        entries.len(),
+    );
+
+    // Fan out with bounded parallelism. Each future carries its own `tag`
+    // back out with the outcome so we can aggregate and report. `check_one`
+    // only reads from the shared client, so no locking is needed.
+    let mut in_flight = FuturesUnordered::new();
+    let mut iter = entries.iter();
+
+    // Seed the first CONCURRENCY futures.
+    for _ in 0..CONCURRENCY {
+        if let Some((tag, body)) = iter.next() {
+            in_flight.push(check_one_owned(&client, tag.clone(), body.clone()));
+        } else {
+            break;
+        }
+    }
+
+    let mut ok = 0usize;
+    let mut mismatched = Vec::<String>::new();
+    let mut fetch_failed = Vec::<(String, StatusCode)>::new();
+
+    while let Some(result) = in_flight.next().await {
+        match result? {
+            (_, Outcome::Match) => ok += 1,
+            (tag, Outcome::Mismatch) => mismatched.push(tag),
+            (tag, Outcome::FetchFailed(status)) => fetch_failed.push((tag, status)),
+        }
+        if let Some((tag, body)) = iter.next() {
+            in_flight.push(check_one_owned(&client, tag.clone(), body.clone()));
+        }
+    }
+
+    info!(
+        "{ok} matched, {} mismatched, {} fetch-failed (of {} total)",
+        mismatched.len(),
+        fetch_failed.len(),
+        entries.len(),
+    );
+
+    if !mismatched.is_empty() {
+        mismatched.sort();
+        bail!(
+            "{} committed checksum file(s) disagree with upstream: {}",
+            mismatched.len(),
+            mismatched.join(", ")
+        );
+    }
+
+    Ok(())
+}
+
+/// Owned-body wrapper over [`check_one`] so each future is `'static`
+/// relative to the caller's stack — required by `FuturesUnordered` when the
+/// futures outlive the iterator borrow.
+async fn check_one_owned(
+    client: &CachingClient,
+    tag: String,
+    body: String,
+) -> Result<(String, Outcome)> {
+    let url = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/SHA256SUMS");
+    match check_one(client, &tag, &body, &url).await {
+        Ok(true) => Ok((tag, Outcome::Match)),
+        Ok(false) => Ok((tag, Outcome::Mismatch)),
+        Err(CheckError::Status(status)) => {
+            warn!("{tag}: GET {url} returned {status}, skipping");
+            Ok((tag, Outcome::FetchFailed(status)))
+        }
+        Err(CheckError::Other(e)) => Err(e).with_context(|| format!("checking tag {tag}")),
+    }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "pydl"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+env_logger = { workspace = true }
+futures-util = { workspace = true }
+log = { workspace = true }
+pydl-cache = { path = "../pydl-cache" }
+pydl-common = { path = "../pydl-common" }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

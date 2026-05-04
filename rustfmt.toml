@@ -1,0 +1,7 @@
+# Import layout. Both `group_imports` and `imports_granularity` are
+# nightly-only rustfmt features today (stable rustfmt silently ignores them
+# with a warning). `./dev.sh fmt` / `fmt-check` invoke `cargo +nightly fmt`
+# so CI and developers get the same enforcement.
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+reorder_imports = true

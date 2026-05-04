@@ -1,0 +1,63 @@
+name: check-checksums
+
+# Runs the `check-checksums` crate, which re-fetches every committed
+# `./checksums/*.sha256sums` from upstream and diffs against the committed
+# bytes. Catches two failure modes:
+#
+#   1. A committed checksum file was tampered with or corrupted in a PR.
+#   2. Upstream silently rewrote a published release's SHA256SUMS (which
+#      would itself be suspicious and worth flagging).
+#
+# Runs on every push/PR that touches the checksum pipeline so a bad PR
+# fails CI before merge, and nightly so post-merge upstream rewrites get
+# caught within a day.
+#
+# Security: this workflow does not interpolate any attacker-controlled
+# GitHub context (issue titles, PR bodies, etc.) into `run:` commands.
+# All `env:` values are string literals.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "checksums/**"
+      - "check-checksums/**"
+      - "pydl-common/src/lib.rs"
+      - ".github/workflows/check-checksums.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "checksums/**"
+      - "check-checksums/**"
+      - "pydl-common/src/lib.rs"
+      - ".github/workflows/check-checksums.yml"
+  schedule:
+    # 07:17 UTC daily — offset from the top of the hour to avoid the
+    # GitHub scheduler thundering-herd window.
+    - cron: "17 7 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-checksums:
+    name: verify committed checksums against upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run check-checksums
+        env:
+          # Verification must be authoritative — don't serve from a stale
+          # disc cache.
+          PYDL_MIN_FRESHNESS_SECS: "0"
+          RUST_LOG: info
+        run: ./dev.sh check-checksums ./checksums
