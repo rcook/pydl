@@ -1104,6 +1104,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures-util",
+ "httpdate",
  "log",
  "pydl-cache",
  "pydl-common",

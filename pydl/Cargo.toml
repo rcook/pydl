@@ -7,6 +7,9 @@ build = "build.rs"
 [lints]
 workspace = true
 
+[build-dependencies]
+httpdate = { workspace = true }
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }

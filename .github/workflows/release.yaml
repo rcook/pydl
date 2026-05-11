@@ -48,6 +48,8 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build
+        env:
+          PYDL_RELEASE_BUILD: "1"
         run: cargo build --verbose --release --target ${{ matrix.target }} -p pydl
 
       - name: Determine binary name

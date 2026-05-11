@@ -7,10 +7,31 @@ use clap::{Parser, Subcommand};
 /// their own UA (e.g. `self-update`, which appends a suffix) build on this.
 pub const USER_AGENT: &str = concat!("pydl/", env!("CARGO_PKG_VERSION"));
 
+/// Multi-line `--version` output. The build script (`pydl/build.rs`) populates
+/// the four `PYDL_BUILD_*` env vars at compile time; `CARGO_PKG_VERSION` comes
+/// straight from `Cargo.toml`. `PYDL_BUILD_SOURCE` is `"official"` only when
+/// `release.yaml` sets `PYDL_RELEASE_BUILD=1`; everything else is `"local"`.
+const VERSION_STRING: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("PYDL_BUILD_PROFILE"),
+    " build, ",
+    env!("PYDL_BUILD_SOURCE"),
+    ")\n",
+    "commit: ",
+    env!("PYDL_BUILD_COMMIT"),
+    "\n",
+    "built:  ",
+    env!("PYDL_BUILD_TIMESTAMP"),
+    "\n",
+    "target: ",
+    env!("PYDL_BUILD_TARGET"),
+);
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pydl",
-    version,
+    version = VERSION_STRING,
     about = "Download, install and run python-build-standalone distributions.",
     long_about = "Fetch, verify, install and run Python distributions from the \
                   astral-sh/python-build-standalone release set.\n\n\
