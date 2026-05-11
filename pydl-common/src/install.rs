@@ -218,6 +218,22 @@ fn unpack(archive_path: &Path, asset_name: &str, dest_dir: &Path) -> Result<()> 
 
 fn unpack_tar<R: Read>(reader: R, dest_dir: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
+    // The archive bytes are SHA-256-verified before this point (see
+    // `verify_sha256` in this module), so we treat them as trusted. The
+    // settings below pin `tar`'s defaults so a future crate update can't
+    // quietly relax them under us:
+    //   - `set_overwrite(true)` — replace any pre-existing file under
+    //     `dest_dir`. The caller always passes a freshly-created staging
+    //     directory, so there's nothing to clobber in practice; this just
+    //     locks the behaviour in.
+    //   - `set_preserve_permissions(true)` — needed so the bundled
+    //     `bin/python3` lands executable on Unix.
+    //   - `set_unpack_xattrs(false)` — keeps platform-specific xattrs out
+    //     of the install dir; upstream archives don't carry meaningful
+    //     ones.
+    archive.set_overwrite(true);
+    archive.set_preserve_permissions(true);
+    archive.set_unpack_xattrs(false);
     archive
         .unpack(dest_dir)
         .with_context(|| format!("unpacking archive into {}", dest_dir.display()))?;
