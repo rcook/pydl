@@ -258,12 +258,21 @@ pub fn auto_select_tag(filter: &mut FilterArgs, releases: &[Release]) -> Result<
         .version
         .clone()
         .expect("version checked is_some above");
+    // Resolve the filter set once. Walk releases in their incoming order
+    // (GitHub returns them newest-first) and stop on the first release
+    // carrying a matching asset.
+    let resolved = filter.resolve();
     for release in releases {
-        let mut probe = filter.clone();
-        probe.tag = Some(release.tag_name.clone());
-        let resolved = probe.resolve();
-        let groups = filter_releases(releases, resolved)?;
-        if !groups.is_empty() {
+        let any_match = release.assets.iter().any(|asset| {
+            resolved.version.is_none_or(|v| asset_matches_version(asset, v))
+                && resolved
+                    .platform
+                    .is_none_or(|p| asset_matches_platform(asset, p))
+                && resolved
+                    .default_attrs
+                    .is_none_or(|d| asset_matches_default_attrs(asset, d))
+        });
+        if any_match {
             log::debug!(
                 "auto-selected tag={} for version={version} (no tag specified)",
                 release.tag_name,
@@ -436,17 +445,18 @@ pub fn auto_select_tag_embedded(filter: &mut FilterArgs) -> Result<()> {
         .version
         .clone()
         .expect("version checked is_some above");
-    let tags = crate::checksums::embedded_tags();
-    // Newest first — tags are `YYYYMMDD` date stamps so reverse-sort works.
-    for tag in tags.into_iter().rev() {
-        let mut probe = filter.clone();
-        probe.tag = Some(tag.to_owned());
-        let hits = filter_embedded(&probe)?;
-        if !hits.is_empty() {
-            log::debug!("auto-selected tag={tag} for version={version} (no tag specified)");
-            filter.tag = Some(tag.to_owned());
-            return Ok(());
-        }
+    // Resolve the filter once and walk every embedded `(tag, name)` pair in
+    // a single pass, tracking the lexicographically largest matching tag.
+    // Tags are `YYYYMMDD` date stamps so max == newest.
+    let resolved = filter.resolve();
+    let newest = crate::checksums::iter_embedded_assets()
+        .filter(|(_, name)| name_matches_filters(name, resolved))
+        .map(|(tag, _)| tag)
+        .max();
+    if let Some(tag) = newest {
+        log::debug!("auto-selected tag={tag} for version={version} (no tag specified)");
+        filter.tag = Some(tag.to_owned());
+        return Ok(());
     }
     bail!(
         "no embedded release carries version {version:?} under the current \
