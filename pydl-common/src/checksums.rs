@@ -63,8 +63,11 @@ fn install_hash_index() -> &'static HashMap<String, &'static str> {
                 let mut h = Sha256::new();
                 h.update(name.as_bytes());
                 let hex = hex_digest(h);
-                // If two asset names ever collide on SHA-256 we'd have bigger
-                // problems; don't bother disambiguating.
+                // The same asset filename routinely appears under multiple
+                // tags (each release republishes the per-platform builds).
+                // The reverse-lookup target is the *name*, not the tag, so
+                // first-write-wins is correct and any subsequent insert for
+                // the same hash is a no-op.
                 idx.entry(hex).or_insert(*name);
             }
         }
