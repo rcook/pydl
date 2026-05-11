@@ -6,10 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, TryStreamExt};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use reqwest::header::{
     CACHE_CONTROL, ETAG, EXPIRES, HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH,
-    LAST_MODIFIED,
+    LAST_MODIFIED, RETRY_AFTER,
 };
 use reqwest::{Client, Response};
 pub use reqwest::{Method, StatusCode};
@@ -253,6 +253,9 @@ impl CachingClient {
         let headers = resp.headers().clone();
 
         if !status.is_success() {
+            if let Some(msg) = rate_limit_message(status, &headers, now) {
+                info!("GET {url} -> {msg}");
+            }
             if is_stale_if_error(status)
                 && let Some((existing_paths, existing_meta)) = existing
             {
@@ -434,6 +437,79 @@ fn is_stale_if_error(status: StatusCode) -> bool {
         || status == StatusCode::FORBIDDEN
 }
 
+/// If `status` + `headers` look like a rate-limit refusal (mostly GitHub-shaped:
+/// 403/429 carrying `X-RateLimit-Remaining: 0` plus `X-RateLimit-Reset`, or any
+/// response with `Retry-After`), return a one-line description that includes an
+/// estimated wait time. `now` is the current unix-epoch timestamp.
+fn rate_limit_message(status: StatusCode, headers: &HeaderMap, now: u64) -> Option<String> {
+    let is_rate_status = status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN;
+    let remaining_zero = headers
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        == Some(0);
+    let reset_at = headers
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    let retry_after_secs = headers
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .and_then(|v| {
+            // `Retry-After` is either delta-seconds or an HTTP-date.
+            v.parse::<u64>().ok().or_else(|| {
+                httpdate::parse_http_date(v)
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs().saturating_sub(now))
+            })
+        });
+
+    let wait_secs = match (retry_after_secs, reset_at) {
+        (Some(s), _) => Some(s),
+        (None, Some(r)) => Some(r.saturating_sub(now)),
+        _ => None,
+    };
+
+    let looks_rate_limited = (is_rate_status && remaining_zero)
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || retry_after_secs.is_some();
+
+    if !looks_rate_limited {
+        return None;
+    }
+
+    let scope = headers
+        .get("x-ratelimit-resource")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| format!(" (scope: {s})"))
+        .unwrap_or_default();
+
+    Some(wait_secs.map_or_else(
+        || format!("rate-limited (HTTP {status}){scope} — retry-after unspecified"),
+        |s| {
+            format!(
+                "rate-limited (HTTP {status}){scope} — try again in ~{}",
+                humanize_duration(s)
+            )
+        },
+    ))
+}
+
+fn humanize_duration(secs: u64) -> String {
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m{:02}s", secs % 60);
+    }
+    let hours = mins / 60;
+    let rem_mins = mins % 60;
+    format!("{hours}h{rem_mins:02}m")
+}
+
 fn is_no_store(headers: &HeaderMap) -> bool {
     headers
         .get(CACHE_CONTROL)
@@ -463,6 +539,63 @@ mod tests {
             );
         }
         h
+    }
+
+    #[test]
+    fn rate_limit_message_github_403_with_reset() {
+        let h = headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "1700"),
+            ("x-ratelimit-resource", "core"),
+        ]);
+        let msg =
+            rate_limit_message(StatusCode::FORBIDDEN, &h, 1000).expect("should detect rate limit");
+        assert!(msg.contains("rate-limited"), "got: {msg}");
+        assert!(msg.contains("HTTP 403"), "got: {msg}");
+        assert!(msg.contains("scope: core"), "got: {msg}");
+        // 700 seconds = 11m40s
+        assert!(msg.contains("11m40s"), "got: {msg}");
+    }
+
+    #[test]
+    fn rate_limit_message_429_with_retry_after_seconds() {
+        let h = headers(&[("retry-after", "45")]);
+        let msg = rate_limit_message(StatusCode::TOO_MANY_REQUESTS, &h, 1000)
+            .expect("should detect rate limit");
+        assert!(msg.contains("rate-limited"), "got: {msg}");
+        assert!(msg.contains("45s"), "got: {msg}");
+    }
+
+    #[test]
+    fn rate_limit_message_403_without_remaining_zero_is_ignored() {
+        // Plain 403 (e.g. private repo, bad token) — no rate-limit headers.
+        let h = headers(&[]);
+        assert!(rate_limit_message(StatusCode::FORBIDDEN, &h, 1000).is_none());
+    }
+
+    #[test]
+    fn rate_limit_message_unspecified_wait() {
+        // Hit the rate-limit shape but no reset/retry-after info.
+        let h = headers(&[("x-ratelimit-remaining", "0")]);
+        let msg =
+            rate_limit_message(StatusCode::FORBIDDEN, &h, 1000).expect("should detect rate limit");
+        assert!(msg.contains("retry-after unspecified"), "got: {msg}");
+    }
+
+    #[test]
+    fn rate_limit_message_500_is_ignored() {
+        let h = headers(&[]);
+        assert!(rate_limit_message(StatusCode::INTERNAL_SERVER_ERROR, &h, 1000).is_none());
+    }
+
+    #[test]
+    fn humanize_duration_buckets() {
+        assert_eq!(humanize_duration(0), "0s");
+        assert_eq!(humanize_duration(45), "45s");
+        assert_eq!(humanize_duration(60), "1m00s");
+        assert_eq!(humanize_duration(125), "2m05s");
+        assert_eq!(humanize_duration(3600), "1h00m");
+        assert_eq!(humanize_duration(3725), "1h02m");
     }
 
     #[test]
