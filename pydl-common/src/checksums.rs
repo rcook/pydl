@@ -4,9 +4,12 @@
 //! this module parses it into a lookup map on demand and verifies downloads.
 
 use std::collections::HashMap;
+use std::fs;
+use std::io::{BufReader, Read};
+use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_checksums.rs"));
@@ -46,6 +49,51 @@ fn parse_sha256sums(body: &'static str) -> HashMap<&'static str, &'static str> {
         }
     }
     map
+}
+
+/// Owned-string variant of [`parse_sha256sums`] for runtime-fetched manifests
+/// (e.g. `pydl self-update` downloading a release's `SHA256SUMS`). Same
+/// permissive parsing rules as the build-time version.
+#[must_use]
+pub fn parse_sha256sums_owned(body: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let Some(hash) = parts.next() else { continue };
+        let Some(rest) = parts.next() else { continue };
+        let name = rest.trim_start();
+        if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) && !name.is_empty() {
+            map.insert(name.to_owned(), hash.to_ascii_lowercase());
+        }
+    }
+    map
+}
+
+/// Stream `path` through SHA-256 and return the digest as lowercase hex.
+///
+/// Reused by `pydl install` (verifying a downloaded asset against its embedded
+/// expected hash) and `pydl self-update` (verifying a release archive against
+/// the `SHA256SUMS` manifest). The 64 KiB buffer is heap-allocated to keep the
+/// stack below clippy's large-array threshold.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let file = fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_digest(hasher))
 }
 
 /// Build a `{sha256-of-asset-name-hex → asset_name}` map on demand.

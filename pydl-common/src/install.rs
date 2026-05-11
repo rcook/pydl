@@ -159,22 +159,7 @@ pub fn install_from_archive(
 /// Errors (with `asset_name` in the message) on mismatch so installs against
 /// a corrupted cache entry bail before we touch the install root.
 fn verify_sha256(archive_path: &Path, expected_hex: &str, asset_name: &str) -> Result<()> {
-    let file = fs::File::open(archive_path)
-        .with_context(|| format!("opening {}", archive_path.display()))?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    // Heap-allocated to keep the stack below clippy's large-array threshold.
-    let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        let n = reader
-            .read(&mut buf)
-            .with_context(|| format!("reading {}", archive_path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    let actual = checksums::hex_digest(hasher);
+    let actual = checksums::sha256_file(archive_path)?;
     if !checksums::hashes_match(expected_hex, &actual) {
         bail!(
             "sha256 mismatch for {asset_name} at {}: expected {expected_hex}, got {actual}",

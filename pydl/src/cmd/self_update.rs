@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use futures_util::StreamExt;
-use log::{debug, info};
+use log::{debug, info, warn};
 use pydl_cache::{CachingClient, Method, StatusCode};
-use pydl_common::{cache_dir, min_freshness_secs};
+use pydl_common::{cache_dir, checksums, min_freshness_secs};
 use semver::Version;
 use serde::Deserialize;
 
@@ -29,6 +29,10 @@ const PRE_PAGE_SIZE: usize = 10;
 const MIN_BINARY_BYTES: u64 = 1024 * 1024;
 
 #[derive(Parser, Debug)]
+// Each of these flags is independent and toggled by its own `--flag`; the
+// "model state as an enum" suggestion from `struct_excessive_bools` doesn't
+// apply.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Args {
     /// Allow updating to the newest pre-release. By default only stable
     /// releases (GitHub's `releases/latest`) are considered.
@@ -43,6 +47,14 @@ pub struct Args {
     /// Print what would be done without replacing the binary.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Refuse to self-update unless the release publishes a `SHA256SUMS`
+    /// manifest. Defaults to off so this binary can still update from
+    /// releases that predate manifest publishing; flip to on by default in a
+    /// future release once two consecutive manifest-publishing releases have
+    /// shipped.
+    #[arg(long)]
+    pub require_checksum: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -133,6 +145,14 @@ pub async fn run(args: Args) -> Result<()> {
         .context("creating staging tempdir")?;
     let archive_path = staging.path().join(&asset.name);
     download_archive(&client, url, &asset.name, &archive_path).await?;
+    verify_release_checksum(
+        &client,
+        &release,
+        &asset.name,
+        &archive_path,
+        args.require_checksum,
+    )
+    .await?;
     let new_binary = extract_pydl_binary(&archive_path, kind, staging.path())?;
 
     let size = fs::metadata(&new_binary)
@@ -282,6 +302,96 @@ async fn download_archive(
     Ok(total)
 }
 
+const CHECKSUM_ASSET_NAME: &str = "SHA256SUMS";
+
+/// The `SHA256SUMS` asset attached to `release`, if present. Returns `None`
+/// for releases that predate manifest publishing.
+fn pick_checksum_asset(release: &Release) -> Option<&ReleaseAsset> {
+    release
+        .assets
+        .iter()
+        .find(|a| a.name == CHECKSUM_ASSET_NAME)
+}
+
+/// Fetch the manifest body into `dest`, returning the parsed map of
+/// `filename → expected hex hash`.
+async fn download_checksums(
+    client: &CachingClient,
+    asset: &ReleaseAsset,
+    dest: &Path,
+) -> Result<std::collections::HashMap<String, String>> {
+    download_archive(client, &asset.browser_download_url, &asset.name, dest).await?;
+    let body =
+        std::fs::read_to_string(dest).with_context(|| format!("reading {}", dest.display()))?;
+    Ok(checksums::parse_sha256sums_owned(&body))
+}
+
+/// Look up `asset_name` in `manifest` and check it against the on-disc bytes
+/// at `archive_path`. Errors on mismatch or when the manifest doesn't list
+/// our asset (a present-but-incomplete manifest is treated as an attack
+/// signal, not a soft warning).
+fn verify_checksum(
+    manifest: &std::collections::HashMap<String, String>,
+    asset_name: &str,
+    archive_path: &Path,
+) -> Result<()> {
+    let expected = manifest.get(asset_name).with_context(|| {
+        format!("SHA256SUMS does not list {asset_name:?} — refusing to self-replace")
+    })?;
+    let actual = checksums::sha256_file(archive_path)?;
+    if !checksums::hashes_match(expected, &actual) {
+        bail!(
+            "sha256 mismatch for {asset_name}: expected {expected}, got {actual} — refusing to self-replace"
+        );
+    }
+    debug!("sha256 verified for {asset_name}: {actual}");
+    Ok(())
+}
+
+/// Wire the manifest fetch + verify into the update flow. Lenient on
+/// missing manifest by default; `require_checksum=true` (set by
+/// `--require-checksum`) makes a missing manifest a hard error.
+async fn verify_release_checksum(
+    client: &CachingClient,
+    release: &Release,
+    asset_name: &str,
+    archive_path: &Path,
+    require_checksum: bool,
+) -> Result<()> {
+    let Some(checksum_asset) = pick_checksum_asset(release) else {
+        if require_checksum {
+            bail!(
+                "release {tag} does not publish a SHA256SUMS — refusing to self-update with --require-checksum",
+                tag = release.tag_name
+            );
+        }
+        warn!(
+            "self-update: no SHA256SUMS in release {}; proceeding without verification",
+            release.tag_name
+        );
+        return Ok(());
+    };
+
+    // Stage the manifest beside the archive so the staging tempdir cleans it
+    // up on drop.
+    let manifest_path = archive_path.with_file_name(CHECKSUM_ASSET_NAME);
+    let manifest = match download_checksums(client, checksum_asset, &manifest_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            if require_checksum {
+                return Err(e).context("fetching SHA256SUMS");
+            }
+            warn!(
+                "self-update: failed to fetch SHA256SUMS for release {}: {e:#} — proceeding without verification",
+                release.tag_name
+            );
+            return Ok(());
+        }
+    };
+
+    verify_checksum(&manifest, asset_name, archive_path)
+}
+
 fn extract_pydl_binary(archive_path: &Path, kind: ArchiveKind, dest_dir: &Path) -> Result<PathBuf> {
     match kind {
         ArchiveKind::TarGz => extract_from_tar_gz(archive_path, dest_dir),
@@ -390,5 +500,95 @@ mod tests {
         assert_eq!(total, 10);
         let bytes = std::fs::read(&dest).unwrap();
         assert_eq!(bytes, b"hello pydl");
+    }
+
+    /// Builds a manifest body in canonical `sha256sum -b` format.
+    fn manifest_body(entries: &[(&str, &str)]) -> String {
+        let mut s = String::new();
+        for (hash, name) in entries {
+            s.push_str(hash);
+            s.push_str("  ");
+            s.push_str(name);
+            s.push('\n');
+        }
+        s
+    }
+
+    fn write_archive(dir: &TempDir, name: &str, body: &[u8]) -> std::path::PathBuf {
+        let p = dir.path().join(name);
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[test]
+    fn verify_checksum_matches() {
+        let dir = TempDir::new().unwrap();
+        let archive = write_archive(&dir, "pydl.tar.gz", b"the bytes");
+        // Pre-compute the expected hash with the same routine the verifier uses.
+        let expected = checksums::sha256_file(&archive).unwrap();
+        let manifest =
+            checksums::parse_sha256sums_owned(&manifest_body(&[(&expected, "pydl.tar.gz")]));
+        verify_checksum(&manifest, "pydl.tar.gz", &archive).expect("matching hash should pass");
+    }
+
+    #[test]
+    fn verify_checksum_mismatch() {
+        let dir = TempDir::new().unwrap();
+        let archive = write_archive(&dir, "pydl.tar.gz", b"the bytes");
+        // Manifest lists a wrong (but well-formed) hash.
+        let bogus = "0".repeat(64);
+        let manifest =
+            checksums::parse_sha256sums_owned(&manifest_body(&[(&bogus, "pydl.tar.gz")]));
+        let err = verify_checksum(&manifest, "pydl.tar.gz", &archive)
+            .expect_err("mismatched hash must error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("sha256 mismatch"), "got: {msg}");
+        assert!(msg.contains("pydl.tar.gz"), "got: {msg}");
+    }
+
+    #[test]
+    fn verify_checksum_asset_not_in_manifest() {
+        let dir = TempDir::new().unwrap();
+        let archive = write_archive(&dir, "pydl.tar.gz", b"the bytes");
+        // Manifest lists *some* file but not ours.
+        let other = "1".repeat(64);
+        let manifest = checksums::parse_sha256sums_owned(&manifest_body(&[(&other, "other.zip")]));
+        let err = verify_checksum(&manifest, "pydl.tar.gz", &archive)
+            .expect_err("missing entry must error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("does not list"), "got: {msg}");
+        assert!(msg.contains("pydl.tar.gz"), "got: {msg}");
+    }
+
+    fn fake_release(asset_names: &[&str]) -> Release {
+        Release {
+            tag_name: "v0.0.0".to_owned(),
+            draft: false,
+            assets: asset_names
+                .iter()
+                .map(|n| ReleaseAsset {
+                    name: (*n).to_owned(),
+                    browser_download_url: format!("https://example.test/{n}"),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn pick_checksum_asset_finds_sha256sums() {
+        let release = fake_release(&[
+            "pydl-v0.0.0-aarch64-apple-darwin.tar.gz",
+            "pydl-v0.0.0-x86_64-pc-windows-msvc.zip",
+            "pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz",
+            "SHA256SUMS",
+        ]);
+        let asset = pick_checksum_asset(&release).expect("manifest must be found");
+        assert_eq!(asset.name, "SHA256SUMS");
+    }
+
+    #[test]
+    fn pick_checksum_asset_returns_none_when_absent() {
+        let release = fake_release(&["pydl-v0.0.0-aarch64-apple-darwin.tar.gz"]);
+        assert!(pick_checksum_asset(&release).is_none());
     }
 }
