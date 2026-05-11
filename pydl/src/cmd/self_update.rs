@@ -383,7 +383,9 @@ mod tests {
 
         let total = download_archive(&client, &url, "pydl.tar.gz", &dest)
             .await
-            .expect("download_archive must succeed even when upstream sets Cache-Control: no-store");
+            .expect(
+                "download_archive must succeed even when upstream sets Cache-Control: no-store",
+            );
 
         assert_eq!(total, 10);
         let bytes = std::fs::read(&dest).unwrap();

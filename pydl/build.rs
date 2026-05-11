@@ -41,10 +41,7 @@ fn git_short_sha() -> Option<String> {
     let git_dir = repo_root.join(".git");
     if git_dir.exists() {
         println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-        println!(
-            "cargo:rerun-if-changed={}",
-            git_dir.join("index").display()
-        );
+        println!("cargo:rerun-if-changed={}", git_dir.join("index").display());
     }
 
     let output = Command::new("git")
