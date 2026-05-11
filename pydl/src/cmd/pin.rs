@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use log::info;
 use pydl_common::asset::{ParsedAsset, asset_sort_key, is_prerelease_key, parse_version_key};
-use pydl_common::checksums::{embedded_tags, has_tag, iter_embedded_assets};
+use pydl_common::checksums::{has_tag, iter_embedded_assets, newest_embedded_tag};
 use pydl_common::config::CONFIG_FILENAME;
 use pydl_common::filter::{FilterArgs, FilterConfig, name_matches_filters};
 
@@ -42,10 +42,7 @@ pub fn run(args: Args) -> Result<()> {
         }
         requested.to_owned()
     } else {
-        // Tags are YYYYMMDD date stamps; lexicographic max == newest.
-        embedded_tags()
-            .into_iter()
-            .max()
+        newest_embedded_tag()
             .context("no embedded release tags available")?
             .to_owned()
     };

@@ -84,13 +84,13 @@ pub fn iter_embedded_assets() -> impl Iterator<Item = (&'static str, &'static st
         .flat_map(|(tag, by_name)| by_name.keys().map(move |name| (*tag, *name)))
 }
 
-/// Every distinct tag carried in the embedded table.
+/// The newest tag in the embedded table, or `None` if the table is empty.
+///
+/// Tags are `YYYYMMDD` date stamps, so the lexicographic max is also the
+/// chronologically newest.
 #[must_use]
-pub fn embedded_tags() -> Vec<&'static str> {
-    let mut tags: Vec<&'static str> = table().keys().copied().collect();
-    // Tags are `YYYYMMDD` date stamps, so lexicographic sort = chronological.
-    tags.sort_unstable();
-    tags
+pub fn newest_embedded_tag() -> Option<&'static str> {
+    table().keys().copied().max()
 }
 
 /// Whether the binary's embedded table has checksums for `tag`.
