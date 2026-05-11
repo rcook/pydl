@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.5] - 2026-05-11
+
+
+### Internal
+- Respect RUST_LOG_STYLE (cf39984)
+- Set explicit symlink policy (f518a3f)
+- Self-update to temp file (a3e1f9a)
+- Reformat code (da217f1)
+- Evict cached body on SHA-256 mismatch (0f9157f)
+- Verify SHA-256 checksums in self-update (d871d23)
+- Set PER_PAGE=100 (a5fee93)
+- Use async method (18a7c6c)
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.4 (e540dc6)
+- Update docs (757674b)
+
 ## [0.1.4] - 2026-05-11
 
 
