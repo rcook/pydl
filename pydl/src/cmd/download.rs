@@ -12,7 +12,6 @@ use pydl_common::filter::{
 use pydl_common::{OWNER, REPO, cache_dir, checksums, min_freshness_secs};
 use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -91,15 +90,12 @@ async fn stream_through_cache(
     }
     let mut hasher = Sha256::new();
     // Drain the stream; the cache writes the tee'd bytes to its body file
-    // as side effect of iterating the stream.
-    let mut sink = tokio::io::sink();
+    // as a side effect of iterating the stream.
     let mut total: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("reading chunk from upstream")?;
         hasher.update(&chunk);
         total += chunk.len() as u64;
-        // Drop bytes — the cache has already teed them to its body file.
-        sink.write_all(&chunk).await.ok();
     }
 
     let actual = checksums::hex_digest(hasher);
