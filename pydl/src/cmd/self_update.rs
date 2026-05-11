@@ -326,8 +326,9 @@ async fn download_checksums(
     dest: &Path,
 ) -> Result<std::collections::HashMap<String, String>> {
     download_archive(client, &asset.browser_download_url, &asset.name, dest).await?;
-    let body =
-        std::fs::read_to_string(dest).with_context(|| format!("reading {}", dest.display()))?;
+    let body = tokio::fs::read_to_string(dest)
+        .await
+        .with_context(|| format!("reading {}", dest.display()))?;
     Ok(checksums::parse_sha256sums_owned(&body))
 }
 
