@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [Unreleased]
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.5 (166dec3)
+
 ## [0.1.5] - 2026-05-11
 
 
@@ -48,7 +54,7 @@ Generated from git commits by [git-cliff](https://git-cliff.org).
 ### Tooling
 - Update CHANGELOG.md for v0.1.3 (07c29b2)
 
-## [0.1.3] - 2026-05-11
+## [0.1.2] - 2026-05-11
 
 
 ### Internal
