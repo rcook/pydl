@@ -264,7 +264,9 @@ pub fn auto_select_tag(filter: &mut FilterArgs, releases: &[Release]) -> Result<
     let resolved = filter.resolve();
     for release in releases {
         let any_match = release.assets.iter().any(|asset| {
-            resolved.version.is_none_or(|v| asset_matches_version(asset, v))
+            resolved
+                .version
+                .is_none_or(|v| asset_matches_version(asset, v))
                 && resolved
                     .platform
                     .is_none_or(|p| asset_matches_platform(asset, p))
