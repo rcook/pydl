@@ -101,3 +101,7 @@ Both are safe to delete; the next `pydl download` / `pydl install` will re-popul
 - [`DEV.md`](./DEV.md) — contributor guide (workspace layout, build/test/lint workflow, CI, how to refresh the embedded checksum set, how to add a new crate).
 - [`DESIGN.md`](./DESIGN.md) — why `pydl` verifies assets the way it does (threat model, alternatives considered).
 - Library READMEs: [`pydl-cache`](./pydl-cache/README.md) (the pull-through HTTP cache), [`get-checksums`](./get-checksums/README.md) (maintenance tool to populate `./checksums/`), [`check-checksums`](./check-checksums/README.md) (CI trip-wire).
+
+## Licence
+
+[MIT License](LICENSE)
