@@ -59,6 +59,10 @@ fn run_single(filter: FilterArgs, confirmed: bool) -> Result<()> {
     auto_select_tag_embedded(&mut filter)?;
 
     let hits = filter_embedded(&filter)?;
+    // The tag is only used to resolve the asset name through the filter; the
+    // install dir is named by SHA-256 of the asset name alone (see
+    // `pydl-common::install::asset_hash`), so the resolved tag is dropped
+    // once we have the name.
     let (_tag, asset_name) = pick_single_embedded(&hits)?;
 
     let hash = asset_hash(asset_name);
