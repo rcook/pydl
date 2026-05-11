@@ -272,7 +272,7 @@ impl CachingClient {
             return Ok((status, passthrough_stream(resp)));
         }
 
-        if is_no_store(&headers) {
+        if parse_cache_control(&headers).no_store {
             return Ok((status, passthrough_stream(resp)));
         }
 
@@ -358,27 +358,31 @@ fn unix_now() -> u64 {
 }
 
 fn build_meta(status: StatusCode, headers: &HeaderMap, now: u64) -> EntryMeta {
-    let (max_age, must_revalidate) = parse_cache_control(headers);
-    let expires_at = max_age.map(|s| now + s).or_else(|| parse_expires(headers));
+    let cc = parse_cache_control(headers);
+    let expires_at = cc
+        .max_age
+        .map(|s| now + s)
+        .or_else(|| parse_expires(headers));
 
     EntryMeta {
         status: status.as_u16(),
         fetched_at: now,
         expires_at,
-        must_revalidate,
+        must_revalidate: cc.must_revalidate,
         etag: header_string(headers, ETAG),
         last_modified: header_string(headers, LAST_MODIFIED),
     }
 }
 
 fn update_meta_from_headers(meta: &mut EntryMeta, headers: &HeaderMap, now: u64) {
-    let (max_age, must_revalidate) = parse_cache_control(headers);
+    let cc = parse_cache_control(headers);
     meta.fetched_at = now;
-    meta.expires_at = max_age
+    meta.expires_at = cc
+        .max_age
         .map(|s| now + s)
         .or_else(|| parse_expires(headers))
         .or(meta.expires_at);
-    meta.must_revalidate = must_revalidate;
+    meta.must_revalidate = cc.must_revalidate;
     if let Some(v) = header_string(headers, ETAG) {
         meta.etag = Some(v);
     }
@@ -394,30 +398,37 @@ fn header_string(headers: &HeaderMap, name: reqwest::header::HeaderName) -> Opti
         .map(ToString::to_string)
 }
 
-fn parse_cache_control(headers: &HeaderMap) -> (Option<u64>, bool) {
+/// Parsed view of a `Cache-Control` header. All fields default to "absent" /
+/// `false` when the header is missing or unparseable.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct CacheControl {
+    max_age: Option<u64>,
+    must_revalidate: bool,
+    no_store: bool,
+}
+
+fn parse_cache_control(headers: &HeaderMap) -> CacheControl {
+    let mut cc = CacheControl::default();
     let Some(v) = headers
         .get(CACHE_CONTROL)
         .and_then(|v: &HeaderValue| v.to_str().ok())
     else {
-        return (None, false);
+        return cc;
     };
-    let mut max_age = None;
-    let mut must_revalidate = false;
     for part in v.split(',').map(str::trim) {
         let lower = part.to_ascii_lowercase();
         if lower == "no-store" {
-            return (Some(0), true);
-        }
-        if lower == "no-cache" || lower == "must-revalidate" {
-            must_revalidate = true;
-        }
-        if let Some(rest) = lower.strip_prefix("max-age=")
+            cc.no_store = true;
+            cc.must_revalidate = true;
+        } else if lower == "no-cache" || lower == "must-revalidate" {
+            cc.must_revalidate = true;
+        } else if let Some(rest) = lower.strip_prefix("max-age=")
             && let Ok(n) = rest.trim().parse::<u64>()
         {
-            max_age = Some(n);
+            cc.max_age = Some(n);
         }
     }
-    (max_age, must_revalidate)
+    cc
 }
 
 fn parse_expires(headers: &HeaderMap) -> Option<u64> {
@@ -508,17 +519,6 @@ fn humanize_duration(secs: u64) -> String {
     let hours = mins / 60;
     let rem_mins = mins % 60;
     format!("{hours}h{rem_mins:02}m")
-}
-
-fn is_no_store(headers: &HeaderMap) -> bool {
-    headers
-        .get(CACHE_CONTROL)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| {
-            v.split(',')
-                .map(str::trim)
-                .any(|p| p.eq_ignore_ascii_case("no-store"))
-        })
 }
 
 #[cfg(test)]
@@ -649,37 +649,58 @@ mod tests {
     #[test]
     fn parse_cache_control_max_age() {
         let h = headers(&[("cache-control", "public, max-age=120")]);
-        assert_eq!(parse_cache_control(&h), (Some(120), false));
+        let cc = parse_cache_control(&h);
+        assert_eq!(cc.max_age, Some(120));
+        assert!(!cc.must_revalidate);
+        assert!(!cc.no_store);
     }
 
     #[test]
     fn parse_cache_control_no_cache() {
         let h = headers(&[("cache-control", "no-cache")]);
-        assert_eq!(parse_cache_control(&h), (None, true));
+        let cc = parse_cache_control(&h);
+        assert_eq!(cc.max_age, None);
+        assert!(cc.must_revalidate);
+        assert!(!cc.no_store);
     }
 
     #[test]
     fn parse_cache_control_must_revalidate() {
         let h = headers(&[("cache-control", "max-age=60, must-revalidate")]);
-        assert_eq!(parse_cache_control(&h), (Some(60), true));
+        let cc = parse_cache_control(&h);
+        assert_eq!(cc.max_age, Some(60));
+        assert!(cc.must_revalidate);
+        assert!(!cc.no_store);
     }
 
     #[test]
-    fn parse_cache_control_no_store_forces_zero_and_revalidate() {
+    fn parse_cache_control_no_store_sets_flag_and_forces_revalidate() {
         let h = headers(&[("cache-control", "no-store, max-age=60")]);
-        assert_eq!(parse_cache_control(&h), (Some(0), true));
+        let cc = parse_cache_control(&h);
+        // `no-store` forces revalidation and is reported on its own field.
+        // `max-age` is still parsed verbatim — call sites consult `no_store`
+        // to decide whether to persist the body, regardless of `max_age`.
+        assert!(cc.no_store);
+        assert!(cc.must_revalidate);
+        assert_eq!(cc.max_age, Some(60));
     }
 
     #[test]
     fn parse_cache_control_absent() {
         let h = headers(&[]);
-        assert_eq!(parse_cache_control(&h), (None, false));
+        let cc = parse_cache_control(&h);
+        assert_eq!(cc.max_age, None);
+        assert!(!cc.must_revalidate);
+        assert!(!cc.no_store);
     }
 
     #[test]
     fn parse_cache_control_ignores_garbage_max_age() {
         let h = headers(&[("cache-control", "max-age=not-a-number")]);
-        assert_eq!(parse_cache_control(&h), (None, false));
+        let cc = parse_cache_control(&h);
+        assert_eq!(cc.max_age, None);
+        assert!(!cc.must_revalidate);
+        assert!(!cc.no_store);
     }
 
     #[test]
@@ -701,14 +722,17 @@ mod tests {
     }
 
     #[test]
-    fn is_no_store_detects() {
-        assert!(is_no_store(&headers(&[("cache-control", "no-store")])));
-        assert!(is_no_store(&headers(&[(
-            "cache-control",
-            "public, no-store, max-age=0"
-        )])));
-        assert!(!is_no_store(&headers(&[("cache-control", "max-age=60")])));
-        assert!(!is_no_store(&headers(&[])));
+    fn no_store_detection_via_parse_cache_control() {
+        assert!(parse_cache_control(&headers(&[("cache-control", "no-store")])).no_store);
+        assert!(
+            parse_cache_control(&headers(&[(
+                "cache-control",
+                "public, no-store, max-age=0"
+            )]))
+            .no_store
+        );
+        assert!(!parse_cache_control(&headers(&[("cache-control", "max-age=60")])).no_store);
+        assert!(!parse_cache_control(&headers(&[])).no_store);
     }
 
     #[test]
