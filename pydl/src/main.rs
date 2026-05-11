@@ -107,14 +107,15 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let mut builder = cli.log.as_deref().map_or_else(
-        || env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")),
-        |directive| {
-            let mut b = env_logger::Builder::new();
-            b.parse_filters(directive);
-            b
-        },
-    );
+    // Build from env first so that `RUST_LOG_STYLE` and other env-driven
+    // `env_logger` knobs are honoured. `--log` then overrides the filter
+    // directive on top of that, matching the CLI doc's promise that the flag
+    // overrides `RUST_LOG` rather than wiping the slate.
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    if let Some(directive) = cli.log.as_deref() {
+        builder.parse_filters(directive);
+    }
     if !cli.log_timestamps {
         builder.format_timestamp(None);
     }
