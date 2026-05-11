@@ -1,9 +1,5 @@
 # To Do
 
-## Documentation
-
-* Installation using `curl` or `Invoke-WebRequest` or equivalent
-
 ## Version Reporting
 
 * `pydl --version` should report if the build is a debug or release build and whether it was installed from GitHub or built locally

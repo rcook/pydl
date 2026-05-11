@@ -21,7 +21,27 @@ pydl python   -t 20260414 -v 3.14.4 -- -m venv .venv
 
 ### From a release binary
 
-Download the binary for your platform from the [Releases page](https://github.com/rcook/pydl/releases) and put it somewhere on your `PATH`. Each tag publishes archives for macOS arm64, Linux x86_64 (musl) and Windows x86_64.
+**macOS / Linux / WSL**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rcook/pydl/main/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/rcook/pydl/main/install.ps1 | iex
+```
+
+**Windows (CMD)**
+
+```cmd
+curl -fsSL https://raw.githubusercontent.com/rcook/pydl/main/install.ps1 -o %TEMP%\pydl-install.ps1 && powershell -ExecutionPolicy Bypass -File %TEMP%\pydl-install.ps1
+```
+
+Default install location is `~/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\pydl` (Windows); override with the `PYDL_INSTALL_DIR` environment variable. Make sure the install directory is on your `PATH`.
+
+You can also grab a release archive manually from the [Releases page](https://github.com/rcook/pydl/releases). Once installed, `pydl self-update` keeps the binary current.
 
 ### From source
 
