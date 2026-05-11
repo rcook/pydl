@@ -165,7 +165,12 @@ impl CachingClient {
     pub fn cached_body_path(&self, url: &str) -> Result<Option<PathBuf>> {
         let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
         let canonical = Self::canonical_url(&parsed);
-        Ok(self.load_entry(&canonical)?.map(|(paths, _)| paths.body))
+        let body = self.load_entry(&canonical)?.map(|(paths, _)| paths.body);
+        match &body {
+            Some(p) => debug!("cached_body_path({url}) -> {}", p.display()),
+            None => debug!("cached_body_path({url}) -> <none>"),
+        }
+        Ok(body)
     }
 
     pub async fn get_stream(&self, url: &str) -> Result<(StatusCode, ByteStream)> {
@@ -189,7 +194,10 @@ impl CachingClient {
             {
                 let status = StatusCode::from_u16(meta.status)?;
                 let ttl_remaining = exp - now;
-                debug!("GET {url} -> HIT (status {status}, fresh for {ttl_remaining}s)");
+                debug!(
+                    "GET {url} -> HIT (status {status}, fresh for {ttl_remaining}s, body {})",
+                    paths.body.display()
+                );
                 return Ok((status, open_stream(&paths.body).await?));
             }
         }
@@ -207,12 +215,22 @@ impl CachingClient {
             }
         }
 
+        let paths = self.entry_paths(&canonical);
         if existing.is_none() {
-            debug!("GET {url} -> MISS, fetching upstream");
+            debug!(
+                "GET {url} -> MISS, fetching upstream (body will be {})",
+                paths.body.display()
+            );
         } else if has_validators {
-            debug!("GET {url} -> STALE, revalidating upstream");
+            debug!(
+                "GET {url} -> STALE, revalidating upstream (body {})",
+                paths.body.display()
+            );
         } else {
-            debug!("GET {url} -> STALE (no validators), refetching upstream");
+            debug!(
+                "GET {url} -> STALE (no validators), refetching upstream (body {})",
+                paths.body.display()
+            );
         }
 
         let resp = self.inner.execute(req.build()?).await?;
@@ -224,20 +242,23 @@ impl CachingClient {
             update_meta_from_headers(&mut meta, resp.headers(), now);
             Self::write_meta(&paths.meta, &meta)?;
             let status = StatusCode::from_u16(meta.status)?;
-            debug!("GET {url} -> HIT (304 Not Modified, revalidated)");
+            debug!(
+                "GET {url} -> HIT (304 Not Modified, revalidated, body {})",
+                paths.body.display()
+            );
             return Ok((status, open_stream(&paths.body).await?));
         }
 
         let status = resp.status();
         let headers = resp.headers().clone();
-        let paths = self.entry_paths(&canonical);
 
         if !status.is_success() {
             if is_stale_if_error(status)
                 && let Some((existing_paths, existing_meta)) = existing
             {
                 warn!(
-                    "GET {url} -> upstream returned {status}, serving stale entry (stale-if-error)"
+                    "GET {url} -> upstream returned {status}, serving stale entry (stale-if-error, body {})",
+                    existing_paths.body.display()
                 );
                 let cached_status = StatusCode::from_u16(existing_meta.status)?;
                 return Ok((cached_status, open_stream(&existing_paths.body).await?));
