@@ -21,7 +21,11 @@ pub const REPO: &str = "python-build-standalone";
 
 /// Page size for release-list requests. Shared so every binary keys on the
 /// same URL and hits the same cache entries.
-pub const PER_PAGE: usize = 10;
+///
+/// `100` is the GitHub API maximum and collapses the typical full-list crawl
+/// (~80 releases today) into one or two requests, conserving the
+/// unauthenticated rate-limit budget.
+pub const PER_PAGE: usize = 100;
 
 /// Default client-side minimum-freshness floor in seconds (24 h). See the
 /// `pydl` README for rationale.
