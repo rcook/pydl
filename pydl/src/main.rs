@@ -3,6 +3,10 @@ mod cmd;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+/// HTTP `User-Agent` for outbound requests from `pydl`. Subcommands that mint
+/// their own UA (e.g. `self-update`, which appends a suffix) build on this.
+pub const USER_AGENT: &str = concat!("pydl/", env!("CARGO_PKG_VERSION"));
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pydl",

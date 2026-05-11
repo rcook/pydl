@@ -1,13 +1,12 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use log::{debug, info};
-use pydl_cache::CachingClient;
 use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
     pick_single_embedded,
 };
 use pydl_common::install::install_from_archive;
-use pydl_common::{OWNER, REPO, cache_dir, min_freshness_secs};
+use pydl_common::{OWNER, REPO, make_client, min_freshness_secs};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -29,8 +28,7 @@ pub fn run(args: Args) -> Result<()> {
     // `install` never hits the network, but we still need a `CachingClient`
     // to look up cache entries on disc. The client is constructed without
     // touching the wire.
-    let client = CachingClient::with_user_agent(cache_dir()?, Some("pydl/0.1"))?
-        .with_min_freshness_secs(min_freshness);
+    let client = make_client(crate::USER_AGENT, min_freshness)?;
 
     let url = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}");
     let Some(archive_path) = client.cached_body_path(&url)? else {

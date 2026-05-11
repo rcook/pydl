@@ -72,7 +72,7 @@ fn print_filtered(groups: &[(&Release, Vec<&Asset>)]) {
 pub async fn run(args: Args) -> Result<()> {
     let min_freshness = min_freshness_secs()?;
     debug!("cache min-freshness floor: {min_freshness}s");
-    let client = make_client("pydl/0.1", min_freshness)?;
+    let client = make_client(crate::USER_AGENT, min_freshness)?;
 
     let mut all_releases = Vec::new();
     let mut page = 1usize;

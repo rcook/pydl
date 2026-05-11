@@ -73,8 +73,8 @@ pub async fn run(args: Args) -> Result<()> {
     // Set at compile time by `pydl/build.rs` (re-exporting cargo's TARGET).
     let target = env!("PYDL_BUILD_TARGET");
 
-    let user_agent = concat!("pydl/", env!("CARGO_PKG_VERSION"), " (self-update)");
-    let client = CachingClient::with_user_agent(cache_dir()?, Some(user_agent))?
+    let user_agent = format!("{} (self-update)", crate::USER_AGENT);
+    let client = CachingClient::with_user_agent(cache_dir()?, Some(user_agent.as_str()))?
         .with_min_freshness_secs(min_freshness_secs()?);
 
     let release = if args.pre {

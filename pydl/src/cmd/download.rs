@@ -9,7 +9,7 @@ use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
     pick_single_embedded,
 };
-use pydl_common::{OWNER, REPO, cache_dir, checksums, min_freshness_secs};
+use pydl_common::{OWNER, REPO, checksums, make_client, min_freshness_secs};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
@@ -36,8 +36,7 @@ pub async fn run(args: Args) -> Result<()> {
 
     let min_freshness = min_freshness_secs()?;
     debug!("cache min-freshness floor: {min_freshness}s");
-    let client = CachingClient::with_user_agent(cache_dir()?, Some("pydl/0.1"))?
-        .with_min_freshness_secs(min_freshness);
+    let client = make_client(crate::USER_AGENT, min_freshness)?;
 
     let url = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}");
     let expected = checksums::expected_hash(tag, asset_name)?;
