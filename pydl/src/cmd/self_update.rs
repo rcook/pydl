@@ -127,12 +127,12 @@ pub async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let archive_path = download_into_cache(&client, url, &asset.name).await?;
-
     let staging = tempfile::Builder::new()
         .prefix("pydl-self-update.")
         .tempdir()
         .context("creating staging tempdir")?;
+    let archive_path = staging.path().join(&asset.name);
+    download_archive(&client, url, &asset.name, &archive_path).await?;
     let new_binary = extract_pydl_binary(&archive_path, kind, staging.path())?;
 
     let size = fs::metadata(&new_binary)
@@ -241,28 +241,45 @@ fn pick_asset<'a>(
     bail!("{msg}");
 }
 
-async fn download_into_cache(
+/// Stream the asset at `url` directly into `dest`, returning the byte count.
+///
+/// Earlier revisions warmed `pydl-cache` and then queried `cached_body_path`
+/// to find where the body landed. That broke when upstream sent
+/// `Cache-Control: no-store`, because the cache then refuses to write a body
+/// and `cached_body_path` returns `None`. Writing to a caller-owned tmp file
+/// avoids that entirely; the cache will still see the request and may
+/// populate its meta, but we don't depend on that here.
+async fn download_archive(
     client: &CachingClient,
     url: &str,
     asset_name: &str,
-) -> Result<PathBuf> {
+    dest: &Path,
+) -> Result<u64> {
+    use tokio::io::AsyncWriteExt;
+
     let (status, mut stream) = client.get_stream(url).await?;
     if status != StatusCode::OK {
         bail!("GET {url} returned {status}");
     }
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .with_context(|| format!("creating {}", dest.display()))?;
     let mut total: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("reading chunk from upstream")?;
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("writing {}", dest.display()))?;
         total += chunk.len() as u64;
     }
-    let body_path = client.cached_body_path(url)?.with_context(|| {
-        format!("cache body missing for {url} after successful fetch (this is a bug)")
-    })?;
+    file.flush()
+        .await
+        .with_context(|| format!("flushing {}", dest.display()))?;
     info!(
         "downloaded {asset_name} ({total} bytes) -> {}",
-        body_path.display()
+        dest.display()
     );
-    Ok(body_path)
+    Ok(total)
 }
 
 fn extract_pydl_binary(archive_path: &Path, kind: ArchiveKind, dest_dir: &Path) -> Result<PathBuf> {
@@ -326,4 +343,50 @@ fn extract_from_zip(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
         }
     }
     bail!("no `pydl.exe` binary found in {}", archive_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use pydl_cache::CachingClient;
+    use tempfile::TempDir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    /// Regression for the no-store branch: with the old "warm cache, then ask
+    /// for the body path" approach, an upstream `Cache-Control: no-store`
+    /// caused `pydl-cache` to skip writing a body, and `cached_body_path`
+    /// returned `None`, and the helper bailed with "this is a bug". The
+    /// rewrite writes directly to a caller-owned path, so `no-store` is
+    /// irrelevant.
+    #[tokio::test]
+    async fn download_archive_handles_no_store() {
+        let cache_dir = TempDir::new().unwrap();
+        let dest_dir = TempDir::new().unwrap();
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/pydl.tar.gz"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("cache-control", "no-store")
+                    .set_body_bytes(b"hello pydl".as_slice()),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/pydl.tar.gz", server.uri());
+        let dest = dest_dir.path().join("pydl.tar.gz");
+
+        let total = download_archive(&client, &url, "pydl.tar.gz", &dest)
+            .await
+            .expect("download_archive must succeed even when upstream sets Cache-Control: no-store");
+
+        assert_eq!(total, 10);
+        let bytes = std::fs::read(&dest).unwrap();
+        assert_eq!(bytes, b"hello pydl");
+    }
 }
