@@ -12,6 +12,7 @@ pydl python           [filter flags] -- [python args]
 pydl pin              [filter flags]
 pydl cache            {info,clear [--yes]}
 pydl completions      <SHELL>
+pydl self-update      [--pre] [--force] [--dry-run]
 ```
 
 ## Subcommands at a glance
@@ -27,8 +28,9 @@ pydl completions      <SHELL>
 | `pydl pin`            | no       | Freeze a filter into `.pydl.json` for the project.                   |
 | `pydl cache`          | no       | Inspect or clear the on-disc HTTP cache.                             |
 | `pydl completions`    | no       | Emit a shell-completion script to stdout.                            |
+| `pydl self-update`    | yes      | Replace the running binary with the latest `rcook/pydl` release.     |
 
-**Only `pydl available` and `pydl download` touch the network.** Everything else is guaranteed offline: filter resolution (`-v 3.14.4` → concrete tag) runs against the SHA-256 checksum table embedded in the `pydl` binary at build time; asset bytes come from whatever `pydl download` previously placed in the cache. If `pydl install` or `pydl python` is asked to operate on an asset whose archive isn't in the cache, it fails with `… isn't in the cache — run 'pydl download -t X -v Y' first` so you always know when a network round-trip is about to happen.
+**`pydl available`, `pydl download` and `pydl self-update` are the only commands that touch the network.** Everything else is guaranteed offline: filter resolution (`-v 3.14.4` → concrete tag) runs against the SHA-256 checksum table embedded in the `pydl` binary at build time; asset bytes come from whatever `pydl download` previously placed in the cache. If `pydl install` or `pydl python` is asked to operate on an asset whose archive isn't in the cache, it fails with `… isn't in the cache — run 'pydl download -t X -v Y' first` so you always know when a network round-trip is about to happen.
 
 ## Filter flags
 
@@ -230,6 +232,25 @@ pydl cache info                 # print path, entry count, total bytes
 pydl cache clear                # dry-run: preview what would be removed (exit 2)
 pydl cache clear --yes          # actually empty the cache
 ```
+
+### `pydl self-update`
+
+Check the [`rcook/pydl` releases](https://github.com/rcook/pydl/releases) for a newer version of `pydl` itself and, if one is available, download the matching archive for the running platform, extract the binary and atomically replace the running executable. The compile-time target triple (set by `pydl/build.rs`) selects which release artifact to fetch — there is no `--target` flag.
+
+```
+pydl self-update                    # no-op if already on the latest stable
+pydl self-update --pre              # consider the newest pre-release too
+pydl self-update --force            # re-download and re-install the same version
+pydl self-update --force --dry-run  # report the asset URL without replacing
+```
+
+Behaviour:
+
+- **Stable-only by default.** Hits GitHub's `releases/latest` endpoint, which already excludes drafts and pre-releases. Pass `--pre` to enumerate recent releases (drafts excluded) and pick the entry with the highest semver, including pre-releases.
+- **No-op when already on the latest version.** Logs `pydl X.Y.Z is already the latest` and exits 0. `--force` overrides this so a corrupted install can be repaired by re-downloading.
+- **Refuses to downgrade silently.** If the running binary is newer than the latest published release, the command logs that fact and exits 0 without doing anything; `--force` is required to actually downgrade.
+- **Verification is HTTPS-only for now.** No checksum file ships with `pydl`'s own releases yet; trust comes from TLS to GitHub. There is a `TODO` to publish + verify a SHA-256 file in a future release.
+- **The replacement is atomic.** Uses [`self_replace`](https://crates.io/crates/self-replace), which handles the Windows `.exe` rename-then-defer-delete dance; on Unix it's a single `rename(2)`. The currently-running process keeps the old code in memory; the next invocation runs the new binary.
 
 ### `pydl completions`
 

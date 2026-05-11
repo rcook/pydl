@@ -1,8 +1,8 @@
 # To Do
 
-## Auto-Update
+## Self-Update
 
-* Self-update from GitHub releases
+* Publish a SHA-256 checksum file alongside each release and have `pydl self-update` verify the downloaded archive against it (today the command trusts HTTPS only — see the `TODO` in `pydl/src/cmd/self_update.rs`).
 
 ## Network Usage
 

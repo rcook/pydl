@@ -74,6 +74,9 @@ enum Cmd {
 
     /// [offline] Emit a shell-completion script for the given shell to stdout.
     Completions(cmd::completions::Args),
+
+    /// [network] Check GitHub releases and self-replace the running binary if a newer pydl is available.
+    SelfUpdate(cmd::self_update::Args),
 }
 
 #[tokio::main]
@@ -101,5 +104,6 @@ async fn main() -> Result<()> {
         Cmd::Pin(args) => cmd::pin::run(args),
         Cmd::Cache(args) => cmd::cache::run(args),
         Cmd::Completions(args) => cmd::completions::run(args),
+        Cmd::SelfUpdate(args) => cmd::self_update::run(args).await,
     }
 }

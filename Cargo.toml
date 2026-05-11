@@ -45,3 +45,6 @@ url = "2"
 tempfile = "3"
 wiremock = "0.6"
 zstd = "0.13"
+self-replace = "1"
+semver = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -64,6 +64,7 @@ Quick orientation:
 | `pydl pin`            | no       | Freeze tag/version into `.pydl.json` for the project.           |
 | `pydl cache`          | no       | Inspect or clear the HTTP cache.                                |
 | `pydl completions`    | no       | Emit a shell-completion script.                                 |
+| `pydl self-update`    | yes      | Replace the running binary with the latest GitHub release.      |
 
 ## State
 

@@ -2,6 +2,7 @@
 name = "pydl"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lints]
 workspace = true
@@ -11,13 +12,17 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 env_logger = { workspace = true }
+flate2 = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
 pydl-cache = { path = "../pydl-cache" }
 pydl-common = { path = "../pydl-common" }
+self-replace = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true }
-
-[dev-dependencies]
+tar = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true }
+zip = { workspace = true }

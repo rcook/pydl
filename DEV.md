@@ -36,6 +36,8 @@ check-checksums/      CI trip-wire that diffs ./checksums/ against upstream
 
 Every crate inherits dependency versions, clippy lints, edition and version from the workspace root via `workspace = true` / `version.workspace = true`. The shared version in `[workspace.package]` is the source of truth for release tags (`v<version>`). Each user-facing crate has its own `README.md`; `pydl-cache` additionally has a `DEV.md` with cache-library-specific notes. `pydl-common` is deliberately README-less — it's an internal helper crate and its module-level doc comments are the authoritative reference.
 
+Two crates carry a `build.rs`: `pydl-common` embeds the SHA-256 checksum table (see [Refreshing the embedded checksum set](#refreshing-the-embedded-checksum-set)); `pydl` re-exports cargo's `TARGET` as `PYDL_BUILD_TARGET` so `pydl self-update` knows which release artifact to fetch.
+
 ## Architecture at a glance
 
 ```
@@ -65,6 +67,19 @@ Key invariants:
 - **Network usage is a subcommand-level property.** Only `available` and `download` may hit the network. All other subcommands enforce this by construction — they never construct a network-facing path. Filter resolution against the embedded checksum table is what makes this possible.
 - **The cache is the handoff point.** `download` warms it, `install`/`python` read from it via `cached_body_path`.
 - **The embedded checksum table is the canonical "what exists" index** for offline subcommands. Asset names encode version, triple, flavour — enough for `filter_embedded` to resolve any `FilterArgs` without the network.
+
+## Self-update
+
+`pydl self-update` is the one subcommand that operates on the `pydl` binary itself rather than on python-build-standalone assets. It hits GitHub's `releases/latest` endpoint for [`rcook/pydl`](https://github.com/rcook/pydl) (or the paged `releases?per_page=10` list when `--pre` is set), compares the running `CARGO_PKG_VERSION` against the latest tag via [`semver`](https://crates.io/crates/semver), downloads the matching archive through the existing `pydl-cache::CachingClient`, extracts the single `pydl` / `pydl.exe` binary, and atomically swaps the running executable via [`self_replace`](https://crates.io/crates/self-replace).
+
+A few mechanics worth knowing when modifying this code:
+
+- **Target detection.** `pydl/build.rs` re-exports cargo's `TARGET` environment variable as `PYDL_BUILD_TARGET` so `cmd/self_update.rs` can read it via `env!("PYDL_BUILD_TARGET")` at compile time. Runtime `std::env::consts::{OS, ARCH}` would not distinguish, e.g., `x86_64-unknown-linux-gnu` from `x86_64-unknown-linux-musl`.
+- **Asset naming.** Release artifacts are named `pydl-${GITHUB_REF_NAME}-${target}.{tar.gz|zip}` (see `.github/workflows/release.yaml`). The leading `v` from the tag is preserved in the asset name; `cmd/self_update.rs` matches on the tag string verbatim. Changing the tagging policy or the release packaging filename will silently break self-update.
+- **Verification is HTTPS-only.** There is no published checksum file for pydl's own releases today; trust comes from TLS to GitHub. The follow-up (publishing a `pydl-${tag}-checksums.txt` and verifying it) is tracked in [`TODO.md`](./TODO.md).
+- **No new release-pipeline coupling.** `release.yaml` already publishes everything `self-update` consumes; no changes are required there to support a new pydl release.
+
+When cutting a release that bumps pydl's version, end-to-end testing is a useful smoke check: temporarily roll workspace `Cargo.toml` back one patch version, `cargo build -p pydl`, run the resulting `target/debug/pydl self-update`, then verify `target/debug/pydl --version` reports the new version. Revert the Cargo.toml edit afterwards.
 
 ## `./dev.sh` / `./dev.ps1`
 
@@ -129,7 +144,7 @@ The cache library carries the bulk of the test suite, covering freshness, revali
 
 ## Running the binaries
 
-- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `cache`, `completions`. See [`pydl/README.md`](./pydl/README.md) for full details.
+- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `cache`, `completions`, `self-update`. See [`pydl/README.md`](./pydl/README.md) for full details.
 - **`./dev.sh get-checksums <dir>`** — project maintenance: mirrors every per-release `SHA256SUMS` into `<dir>` (by convention `./checksums/`). Idempotent; the results are embedded into `pydl` at build time for offline verification.
 - **`./dev.sh check-checksums <dir>`** — CI trip-wire: verifies every `<dir>/<tag>.sha256sums` file is bit-exact with what upstream currently serves. Exits non-zero on any mismatch. Used by `.github/workflows/check-checksums.yml`. See [`check-checksums/README.md`](./check-checksums/README.md).
 - **`./dev.sh install-pydl`** — builds `pydl` in release mode and copies the resulting binary to `~/.local/bin/pydl`, creating the directory if needed. Warns if `~/.local/bin` is not on your `PATH`. Re-run after any change you want to exercise via a `pydl` on `PATH` rather than through `cargo run`.
