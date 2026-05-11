@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use futures_util::StreamExt;
-use log::{debug, info};
+use log::{debug, info, warn};
 use pydl_cache::{CachingClient, StatusCode};
 use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
@@ -73,10 +73,8 @@ pub async fn run(args: Args) -> Result<()> {
 }
 
 /// Consume the asset body through the cache and verify its SHA-256 against
-/// `expected_hex`. On hash mismatch, the cache body is left for `pydl-cache`
-/// to overwrite on the next fetch — the stored bytes on disc are the
-/// actual downloaded bytes regardless. The verify-after-consume pattern
-/// mirrors the original `download` behaviour, just sourced from the cache.
+/// `expected_hex`. On hash mismatch the cache entry is evicted so a re-run
+/// will refetch from upstream instead of re-serving the bad bytes.
 async fn stream_through_cache(
     client: &CachingClient,
     url: &str,
@@ -99,9 +97,18 @@ async fn stream_through_cache(
 
     let actual = checksums::hex_digest(hasher);
     if !checksums::hashes_match(expected_hex, &actual) {
+        // The cache holds the wrong bytes upstream served us. Evict before
+        // bailing so a re-run actually refetches instead of serving the
+        // poisoned entry as a HIT (or revalidating against the same bad
+        // upstream and getting a 304). Eviction failure is logged but does
+        // not mask the original mismatch error — the user can still recover
+        // with `pydl cache clear --yes`.
+        if let Err(e) = client.evict(url) {
+            warn!("failed to evict cache entry for {url} after sha256 mismatch: {e:#}");
+        }
         bail!(
             "sha256 mismatch for {asset_name}: expected {expected_hex}, got {actual} — \
-             not promoting to install; re-run to refetch"
+             cache entry evicted; re-run to refetch"
         );
     }
     Ok(total)

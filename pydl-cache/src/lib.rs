@@ -173,6 +173,27 @@ impl CachingClient {
         Ok(body)
     }
 
+    /// Remove every on-disc artifact for `url`: meta, body, and any tmp body
+    /// left behind by an in-progress write.
+    ///
+    /// Idempotent: a URL that was never cached is a no-op. Use this when a
+    /// caller-side integrity check (e.g. SHA-256 verification of a download)
+    /// catches that the cached bytes are wrong, so the next request actually
+    /// refetches rather than re-serving the bad entry as a HIT.
+    pub fn evict(&self, url: &str) -> Result<()> {
+        let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
+        let canonical = Self::canonical_url(&parsed);
+        let paths = self.entry_paths(&canonical);
+        for p in [&paths.meta, &paths.body, &paths.tmp_body()] {
+            match fs::remove_file(p) {
+                Ok(()) => debug!("evict({url}) -> removed {}", p.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("removing {}", p.display())),
+            }
+        }
+        Ok(())
+    }
+
     pub async fn get_stream(&self, url: &str) -> Result<(StatusCode, ByteStream)> {
         let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
         let canonical = Self::canonical_url(&parsed);
@@ -1860,5 +1881,72 @@ mod tests {
         let bytes = std::fs::read(&body_path).unwrap();
         assert_eq!(bytes, b"payload");
         // The read must not have triggered a refetch; the mock is `expect(1)`.
+    }
+
+    #[tokio::test]
+    async fn evict_removes_meta_and_body() {
+        let dir = TempDir::new().unwrap();
+        let client = make_client(&dir);
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/r"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("cache-control", "max-age=60")
+                    .set_body_bytes(b"payload".as_slice()),
+            )
+            .mount(&server)
+            .await;
+
+        let url = format!("{}/r", server.uri());
+        client.request(Method::GET, &url).await.unwrap();
+
+        let canonical = CachingClient::canonical_url(&Url::parse(&url).unwrap());
+        let paths = client.entry_paths(&canonical);
+        assert!(paths.meta.exists());
+        assert!(paths.body.exists());
+
+        client.evict(&url).unwrap();
+        assert!(!paths.meta.exists(), "meta must be gone after evict");
+        assert!(!paths.body.exists(), "body must be gone after evict");
+    }
+
+    /// Locks in the property that motivated `evict`: a poisoned cache entry
+    /// can be cleared so the next request actually hits upstream again,
+    /// rather than re-serving the bad bytes.
+    #[tokio::test]
+    async fn evict_then_request_refetches() {
+        let dir = TempDir::new().unwrap();
+        let client = make_client(&dir);
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/r"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("cache-control", "max-age=3600")
+                    .set_body_bytes(b"payload".as_slice()),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let url = format!("{}/r", server.uri());
+        client.request(Method::GET, &url).await.unwrap();
+        client.evict(&url).unwrap();
+        // Without the evict, this would be a HIT (server's max-age=3600); the
+        // `expect(2)` on the mock asserts upstream was actually re-hit.
+        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, b"payload");
+    }
+
+    #[tokio::test]
+    async fn evict_is_idempotent_for_uncached_url() {
+        let dir = TempDir::new().unwrap();
+        let client = make_client(&dir);
+        // Never fetched — eviction should be a clean no-op.
+        client.evict("https://x.test/never-fetched").unwrap();
     }
 }
