@@ -36,7 +36,13 @@ check-checksums/      CI trip-wire that diffs ./checksums/ against upstream
 
 Every crate inherits dependency versions, clippy lints, edition and version from the workspace root via `workspace = true` / `version.workspace = true`. The shared version in `[workspace.package]` is the source of truth for release tags (`v<version>`). Each user-facing crate has its own `README.md`; `pydl-cache` additionally has a `DEV.md` with cache-library-specific notes. `pydl-common` is deliberately README-less — it's an internal helper crate and its module-level doc comments are the authoritative reference.
 
-Two crates carry a `build.rs`: `pydl-common` embeds the SHA-256 checksum table (see [Refreshing the embedded checksum set](#refreshing-the-embedded-checksum-set)); `pydl` re-exports cargo's `TARGET` as `PYDL_BUILD_TARGET` so `pydl self-update` knows which release artifact to fetch.
+Two crates carry a `build.rs`: `pydl-common` embeds the SHA-256 checksum table (see [Refreshing the embedded checksum set](#refreshing-the-embedded-checksum-set)); `pydl` re-exports several compile-time facts that surface in `pydl --version` and drive `pydl self-update`:
+
+- `PYDL_BUILD_TARGET` — cargo's `TARGET`, so `self-update` knows which release artifact to fetch.
+- `PYDL_BUILD_PROFILE` — cargo's `PROFILE` (`debug` / `release`).
+- `PYDL_BUILD_SOURCE` — `"official"` when `PYDL_RELEASE_BUILD=1` is set (only by `release.yaml`); `"local"` otherwise.
+- `PYDL_BUILD_COMMIT` — short git SHA, with a `-dirty` suffix when the working tree is uncommitted; `unknown` outside a checkout.
+- `PYDL_BUILD_TIMESTAMP` — HTTP-date string. Honours `SOURCE_DATE_EPOCH` for reproducible builds.
 
 ## Architecture at a glance
 
@@ -76,10 +82,11 @@ A few mechanics worth knowing when modifying this code:
 
 - **Target detection.** `pydl/build.rs` re-exports cargo's `TARGET` environment variable as `PYDL_BUILD_TARGET` so `cmd/self_update.rs` can read it via `env!("PYDL_BUILD_TARGET")` at compile time. Runtime `std::env::consts::{OS, ARCH}` would not distinguish, e.g., `x86_64-unknown-linux-gnu` from `x86_64-unknown-linux-musl`.
 - **Asset naming.** Release artifacts are named `pydl-${GITHUB_REF_NAME}-${target}.{tar.gz|zip}` (see `.github/workflows/release.yaml`). The leading `v` from the tag is preserved in the asset name; `cmd/self_update.rs` matches on the tag string verbatim. Changing the tagging policy or the release packaging filename will silently break self-update.
-- **Verification is HTTPS-only.** There is no published checksum file for pydl's own releases today; trust comes from TLS to GitHub. The follow-up (publishing a `pydl-${tag}-checksums.txt` and verifying it) is tracked in [`TODO.md`](./TODO.md).
-- **No new release-pipeline coupling.** `release.yaml` already publishes everything `self-update` consumes; no changes are required there to support a new pydl release.
+- **Verification.** `release.yaml` writes a `SHA256SUMS` manifest alongside the per-target archives. `self-update` fetches it and hashes the downloaded archive against the matching entry before extracting. A missing manifest currently warns and proceeds (so a binary built before manifest publishing can still update through a manifest-publishing release); pass `--require-checksum` to make a missing manifest a hard error. The default flips to strict in a future release once two consecutive manifest-publishing releases have shipped — see the rollout note in `pydl/src/cmd/self_update.rs`.
+- **Manifest format.** Plain `sha256sum`-style: `<hex>  <filename>` per line. Generated in the `publish` job with `sha256sum pydl-* > SHA256SUMS`. Filenames only — no path prefix — so the verifier consumes lines verbatim.
+- **No other release-pipeline coupling.** `release.yaml` publishes everything `self-update` consumes; no changes are required there to support a new pydl release once the manifest step is in place.
 
-When cutting a release that bumps pydl's version, end-to-end testing is a useful smoke check: temporarily roll workspace `Cargo.toml` back one patch version, `cargo build -p pydl`, run the resulting `target/debug/pydl self-update`, then verify `target/debug/pydl --version` reports the new version. Revert the Cargo.toml edit afterwards.
+When cutting a release that bumps pydl's version, end-to-end testing is a useful smoke check: temporarily roll workspace `Cargo.toml` back one patch version, `cargo build -p pydl`, run the resulting `target/debug/pydl self-update`, then verify `target/debug/pydl --version` reports the new version. The output is multi-line: a `pydl X.Y.Z (<profile> build, <source>)` header followed by `commit:`, `built:`, `target:` lines. Revert the Cargo.toml edit afterwards.
 
 ## `./dev.sh` / `./dev.ps1`
 

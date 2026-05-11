@@ -1,9 +1,14 @@
 //! `pydl self-update`: check GitHub releases for `rcook/pydl` and replace the
 //! running binary if a newer version is available.
 //!
-//! Trust model: HTTPS only — there is no published checksum file for pydl's
-//! own releases yet.
-// TODO: verify SHA-256 once release.yaml publishes a checksum file.
+//! Trust model: HTTPS to GitHub plus a `SHA256SUMS` manifest published in the
+//! same release. The downloaded archive is hashed and compared against the
+//! manifest entry before extraction; a hash mismatch never replaces the
+//! binary. A missing manifest currently warns and proceeds (so binaries
+//! built before manifest publishing can still update); `--require-checksum`
+//! makes a missing manifest a hard error too. The default will flip to
+//! strict in a future release once two consecutive manifest-publishing
+//! releases have shipped.
 
 use std::fs::{self, File};
 use std::io::{self, BufReader};

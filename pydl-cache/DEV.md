@@ -11,7 +11,7 @@ Everything is currently in a single file: `src/lib.rs`. It's organized top-to-bo
 3. The request path — `get_stream`, `request`, the freshness check, the revalidation path.
 4. The download / tee-to-disc helpers.
 5. Freshness and cache-control parsing.
-6. `#[cfg(test)] mod tests` with ~50 tests.
+6. `#[cfg(test)] mod tests` with ~60 tests.
 
 There's no module split yet because the file is still small enough to navigate. If it grows, the natural fault lines are: metadata (`EntryMeta` + on-disc I/O), request logic (freshness, revalidation, stale-if-error) and parsing (`Cache-Control`, `Expires`).
 

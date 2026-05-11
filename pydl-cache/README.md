@@ -11,14 +11,16 @@ A disc-backed pull-through HTTP cache over [`reqwest`](https://crates.io/crates/
 - [Cache key](#cache-key)
 - [Log lines](#log-lines)
 - [Stale-if-error](#stale-if-error)
-- [Eviction](#eviction)
+- [Eviction](#eviction) — caller-driven only; no automatic policy
 
 ## API
 
-Two entry points on `CachingClient`:
+Entry points on `CachingClient`:
 
 - **`get_stream(url) -> (StatusCode, impl Stream<Item = Result<Bytes>>)`** — the streaming primitive. Suitable for multi-MB payloads (tarballs, archives) where buffering the whole body in memory would be a real cost.
 - **`request(method, url) -> (StatusCode, Vec<u8>)`** — buffered convenience. For GETs, this is `get_stream` collected into a `Vec`. For non-GET methods, it forwards to `reqwest` and skips the cache.
+- **`cached_body_path(url) -> Option<PathBuf>`** — strictly-offline lookup. Returns the on-disc path of a previously-cached body, or `None` if there's no entry. Never hits the network and never revalidates.
+- **`evict(url) -> Result<()>`** — caller-driven removal of an entry's meta, body and any leftover tmp body. Idempotent on missing files. Use after a caller-side integrity check (e.g. SHA-256 verification) detects that the cached bytes are wrong, so the next request actually refetches.
 
 ## On-disc format
 
@@ -133,12 +135,13 @@ When the cache attempts to revalidate (or refetch) a stale entry and the upstrea
 
 ## Eviction
 
-**`pydl-cache` intentionally does not implement eviction.** The cache grows without bound. Deciding this deliberately, rather than drifting into it, keeps the library's behaviour simple and predictable: an entry, once written, stays on disc until it's overwritten by a successful refetch of the same URL, or until the user deletes the cache directory.
+**`pydl-cache` does not implement automatic eviction.** The cache grows without bound; entries persist until they're overwritten by a successful refetch of the same URL or removed deliberately. There's a single deliberate-removal primitive — `CachingClient::evict(url)` — for callers that detect a poisoned entry and need to clear it; everything else is up to the user (`pydl cache clear --yes` or `rm -rf ~/.pydl/cache/`).
 
 What the current code *does* do that you might confuse with eviction:
 
 - **Overwrite on refetch.** When a URL is refetched, the existing entry is replaced by `rename(tmp, path)`. That keeps a single URL's entry from growing, but doesn't remove anything else.
 - **Skip caching for `no-store`.** Responses with `Cache-Control: no-store` are returned to the caller but never written. That's avoidance, not eviction.
+- **`evict(url)`.** Caller-driven, explicit removal of one entry's meta + body + tmp body. Idempotent: a URL that was never cached is a no-op. Used by `pydl download` when its post-stream SHA-256 check rejects the bytes — without eviction the next request would re-serve the bad entry as a HIT.
 
 What it does *not* do:
 
@@ -147,9 +150,9 @@ What it does *not* do:
 - **No index.** We'd need one to evict without scanning every file.
 - **No lifetime bound.** Even a URL you hit once and never again persists indefinitely.
 
-### Possible strategies
+### Possible strategies for *automatic* eviction
 
-If eviction is added later, the usual options in rough order of complexity:
+If automatic eviction is added later, the usual options in rough order of complexity:
 
 1. **Opportunistic TTL sweep on startup** — walk `cache_dir`, read each meta, unlink anything where `expires_at < now`. Cheap, but doesn't bound size for entries that keep revalidating.
 2. **Size cap with LRU** — track access time (stat `mtime` or a field in meta), and on each write, if total size > budget, delete oldest until under. Needs either a full dir scan or a sidecar index.

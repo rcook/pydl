@@ -12,7 +12,7 @@ pydl python           [filter flags] -- [python args]
 pydl pin              [filter flags]
 pydl cache            {info,clear [--yes]}
 pydl completions      <SHELL>
-pydl self-update      [--pre] [--force] [--dry-run]
+pydl self-update      [--pre] [--force] [--dry-run] [--require-checksum]
 ```
 
 ## Subcommands at a glance
@@ -238,10 +238,11 @@ pydl cache clear --yes          # actually empty the cache
 Check the [`rcook/pydl` releases](https://github.com/rcook/pydl/releases) for a newer version of `pydl` itself and, if one is available, download the matching archive for the running platform, extract the binary and atomically replace the running executable. The compile-time target triple (set by `pydl/build.rs`) selects which release artifact to fetch — there is no `--target` flag.
 
 ```
-pydl self-update                    # no-op if already on the latest stable
-pydl self-update --pre              # consider the newest pre-release too
-pydl self-update --force            # re-download and re-install the same version
-pydl self-update --force --dry-run  # report the asset URL without replacing
+pydl self-update                       # no-op if already on the latest stable
+pydl self-update --pre                 # consider the newest pre-release too
+pydl self-update --force               # re-download and re-install the same version
+pydl self-update --force --dry-run     # report the asset URL without replacing
+pydl self-update --require-checksum    # refuse to update without a SHA256SUMS manifest
 ```
 
 Behaviour:
@@ -249,7 +250,7 @@ Behaviour:
 - **Stable-only by default.** Hits GitHub's `releases/latest` endpoint, which already excludes drafts and pre-releases. Pass `--pre` to enumerate recent releases (drafts excluded) and pick the entry with the highest semver, including pre-releases.
 - **No-op when already on the latest version.** Logs `pydl X.Y.Z is already the latest` and exits 0. `--force` overrides this so a corrupted install can be repaired by re-downloading.
 - **Refuses to downgrade silently.** If the running binary is newer than the latest published release, the command logs that fact and exits 0 without doing anything; `--force` is required to actually downgrade.
-- **Verification is HTTPS-only for now.** No checksum file ships with `pydl`'s own releases yet; trust comes from TLS to GitHub. There is a `TODO` to publish + verify a SHA-256 file in a future release.
+- **SHA-256 verification.** Each release publishes a `SHA256SUMS` manifest alongside the platform archives (see `.github/workflows/release.yaml`). After downloading the archive `self-update` fetches the manifest and verifies the archive's hash before extracting. A hash mismatch — or a manifest that's present but doesn't list this archive — is a hard error and the running binary is never replaced. If the manifest is *absent* (older releases predate this), the command warns and proceeds; pass `--require-checksum` to make that a hard error too. The default will flip to strict in a future release once two consecutive manifest-publishing releases have shipped.
 - **The replacement is atomic.** Uses [`self_replace`](https://crates.io/crates/self-replace), which handles the Windows `.exe` rename-then-defer-delete dance; on Unix it's a single `rename(2)`. The currently-running process keeps the old code in memory; the next invocation runs the new binary.
 
 ### `pydl completions`
