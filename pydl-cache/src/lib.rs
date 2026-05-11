@@ -320,34 +320,38 @@ fn passthrough_stream(resp: Response) -> ByteStream {
 
 async fn download_to_tmp(paths: &EntryPaths, resp: Response) -> Result<()> {
     let tmp = paths.tmp_body();
-    let file = File::create(&tmp)
+    match stream_response_to_path(resp, &tmp).await {
+        Ok(()) => tokio::fs::rename(&tmp, &paths.body)
+            .await
+            .with_context(|| format!("renaming {} -> {}", tmp.display(), paths.body.display())),
+        Err(e) => {
+            // Body may be partially written; remove the tmp file so the next
+            // call has a clean slate. A stray tmp from a crash is harmless —
+            // it's only reused on a successful write of the same URL — but
+            // cleaning up here keeps `cache info` byte counts honest.
+            let _ = tokio::fs::remove_file(&tmp).await;
+            Err(e)
+        }
+    }
+}
+
+/// Stream the response body into `dest`, flushing before returning. The file
+/// is created (and on success, fully populated) but not renamed — the caller
+/// owns the final-name semantics.
+async fn stream_response_to_path(resp: Response, dest: &Path) -> Result<()> {
+    let file = File::create(dest)
         .await
-        .with_context(|| format!("creating {}", tmp.display()))?;
+        .with_context(|| format!("creating {}", dest.display()))?;
     let mut writer = BufWriter::new(file);
     let mut stream = resp.bytes_stream();
-    let mut wrote_ok = false;
-    let result: Result<()> = async {
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("reading upstream body")?;
-            writer
-                .write_all(&chunk)
-                .await
-                .context("writing cache body")?;
-        }
-        writer.flush().await.context("flushing cache body")?;
-        wrote_ok = true;
-        Ok(())
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("reading upstream body")?;
+        writer
+            .write_all(&chunk)
+            .await
+            .context("writing cache body")?;
     }
-    .await;
-
-    if !wrote_ok {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return result;
-    }
-
-    tokio::fs::rename(&tmp, &paths.body)
-        .await
-        .with_context(|| format!("renaming {} -> {}", tmp.display(), paths.body.display()))?;
+    writer.flush().await.context("flushing cache body")?;
     Ok(())
 }
 
