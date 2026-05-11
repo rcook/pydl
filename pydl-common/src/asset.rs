@@ -81,7 +81,7 @@ pub enum VersionTrailer {
 /// Each dot-separated segment becomes `(numeric_prefix, trailer)`. Segments
 /// with no numeric prefix (`"abc"`) get `0` for the number and the whole
 /// string as the trailer.
-pub type VersionKey = Vec<(u32, VersionTrailer)>;
+pub type VersionKey = Vec<(u64, VersionTrailer)>;
 
 #[must_use]
 pub fn parse_version_key(version: &str) -> VersionKey {
@@ -90,7 +90,7 @@ pub fn parse_version_key(version: &str) -> VersionKey {
         .map(|segment| {
             let prefix_len = segment.bytes().take_while(u8::is_ascii_digit).count();
             let (num_str, trailer) = segment.split_at(prefix_len);
-            let num = num_str.parse::<u32>().unwrap_or(0);
+            let num = num_str.parse::<u64>().unwrap_or(0);
             let trailer = if trailer.is_empty() {
                 VersionTrailer::Final
             } else {
