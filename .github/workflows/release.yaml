@@ -73,7 +73,31 @@ jobs:
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: bash
-        run: 7z a "${{ steps.bin.outputs.archive }}" "${{ steps.bin.outputs.src }}"
+        # Mirror the tar.gz invocation: cd into the binary's directory and pass
+        # only the basename so the archive entries are flat (`pydl.exe`), not
+        # nested under `target/<triple>/release/`. Archive path is resolved to
+        # an absolute path before the `cd` so it lands at the workspace root
+        # where the upload-artifact step expects it.
+        run: |
+          src_dir="$(dirname "${{ steps.bin.outputs.src }}")"
+          src_name="$(basename "${{ steps.bin.outputs.src }}")"
+          archive_abs="$PWD/${{ steps.bin.outputs.archive }}"
+          (cd "$src_dir" && 7z a "$archive_abs" "$src_name")
+
+      - name: Verify flat archive layout
+        shell: bash
+        run: |
+          archive="${{ steps.bin.outputs.archive }}"
+          expected="$(basename "${{ steps.bin.outputs.src }}")"
+          case "$archive" in
+            *.zip)    listing="$(7z l -slt "$archive" | sed -n 's/^Path = //p' | tail -n +2)" ;;
+            *.tar.gz) listing="$(tar -tzf "$archive")" ;;
+          esac
+          if ! printf '%s\n' "$listing" | grep -Fxq "$expected"; then
+            echo "::error::archive $archive does not contain $expected at top level. Listing:"
+            printf '%s\n' "$listing"
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
