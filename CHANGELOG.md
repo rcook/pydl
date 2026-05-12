@@ -3,11 +3,22 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
-## [Unreleased]
+## [0.1.6] - 2026-05-12
+
+
+### Bug Fixes
+- Fix #2: 504 Gateway Timeout when running "pydl available" (20f9eb8)
+- Fix #1: Flatten Windows release archive (9e1503b)
+- Fix #3: Upgrade CI dependencies (0e69013)
+
+
+### Features
+- Add LICENSE (be77090)
 
 
 ### Tooling
 - Update CHANGELOG.md for v0.1.5 (166dec3)
+- Update CHANGELOG.md for v0.1.2 (e839417)
 
 ## [0.1.5] - 2026-05-11
 
