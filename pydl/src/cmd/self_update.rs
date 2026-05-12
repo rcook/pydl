@@ -10,11 +10,11 @@
 //! Trust model: HTTPS to GitHub plus a `SHA256SUMS` manifest published in the
 //! same release. The downloaded archive is hashed and compared against the
 //! manifest entry before extraction; a hash mismatch never replaces the
-//! binary. A missing manifest currently warns and proceeds (so binaries
-//! built before manifest publishing can still update); `--require-checksum`
-//! makes a missing manifest a hard error too. The default will flip to
-//! strict in a future release once two consecutive manifest-publishing
-//! releases have shipped.
+//! binary. A missing manifest is a hard error: `pydl self-update` refuses
+//! to self-replace from a release that doesn't publish `SHA256SUMS`. Pass
+//! `--allow-missing-checksum` to opt out for the rare case of updating
+//! through a pre-manifest release (only relevant for binaries built before
+//! v0.1.5).
 
 use std::fs::{self, File};
 use std::io::{self, BufReader};
@@ -60,13 +60,13 @@ pub struct Args {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Refuse to self-update unless the release publishes a `SHA256SUMS`
-    /// manifest. Defaults to off so this binary can still update from
-    /// releases that predate manifest publishing; flip to on by default in a
-    /// future release once two consecutive manifest-publishing releases have
-    /// shipped.
+    /// Allow self-updating to a release that doesn't publish a `SHA256SUMS`
+    /// manifest. By default `pydl self-update` refuses to self-replace
+    /// without verification. Pre-manifest releases (v0.1.4 and earlier) do
+    /// not publish `SHA256SUMS`; this flag lets you update through one of
+    /// them at your own risk.
     #[arg(long)]
-    pub require_checksum: bool,
+    pub allow_missing_checksum: bool,
 
     /// Bypass the snapshot written by `pydl update` and check
     /// `api.github.com` directly for the latest version. Required when
@@ -218,7 +218,7 @@ pub async fn run(args: Args) -> Result<()> {
         &release,
         &asset.name,
         &archive_path,
-        args.require_checksum,
+        args.allow_missing_checksum,
     )
     .await?;
     let new_binary = extract_pydl_binary(&archive_path, kind, staging.path())?;
@@ -418,25 +418,25 @@ fn verify_checksum(
     Ok(())
 }
 
-/// Wire the manifest fetch + verify into the update flow. Lenient on
-/// missing manifest by default; `require_checksum=true` (set by
-/// `--require-checksum`) makes a missing manifest a hard error.
+/// Wire the manifest fetch + verify into the update flow. Strict by default;
+/// `allow_missing=true` (set by `--allow-missing-checksum`) downgrades a
+/// missing manifest from a hard error to a warning.
 async fn verify_release_checksum(
     client: &CachingClient,
     release: &Release,
     asset_name: &str,
     archive_path: &Path,
-    require_checksum: bool,
+    allow_missing: bool,
 ) -> Result<()> {
     let Some(checksum_asset) = pick_checksum_asset(release) else {
-        if require_checksum {
+        if !allow_missing {
             bail!(
-                "release {tag} does not publish a SHA256SUMS — refusing to self-update with --require-checksum",
+                "release {tag} does not publish a SHA256SUMS — refusing to self-update without verification (pass --allow-missing-checksum to override)",
                 tag = release.tag_name
             );
         }
         warn!(
-            "self-update: no SHA256SUMS in release {}; proceeding without verification",
+            "self-update: no SHA256SUMS in release {} and --allow-missing-checksum was passed; proceeding without verification",
             release.tag_name
         );
         return Ok(());
@@ -448,11 +448,11 @@ async fn verify_release_checksum(
     let manifest = match download_checksums(client, checksum_asset, &manifest_path).await {
         Ok(m) => m,
         Err(e) => {
-            if require_checksum {
+            if !allow_missing {
                 return Err(e).context("fetching SHA256SUMS");
             }
             warn!(
-                "self-update: failed to fetch SHA256SUMS for release {}: {e:#} — proceeding without verification",
+                "self-update: failed to fetch SHA256SUMS for release {} ({e:#}); --allow-missing-checksum was passed, proceeding without verification",
                 release.tag_name
             );
             return Ok(());
@@ -659,5 +659,54 @@ mod tests {
     fn pick_checksum_asset_returns_none_when_absent() {
         let release = fake_release(&["pydl-v0.0.0-aarch64-apple-darwin.tar.gz"]);
         assert!(pick_checksum_asset(&release).is_none());
+    }
+
+    /// Strict default: a release without a `SHA256SUMS` asset must error,
+    /// and the error must name the new opt-out flag so the user knows the
+    /// path forward.
+    #[tokio::test]
+    async fn verify_release_checksum_strict_by_default_errors_on_missing_manifest() {
+        let dir = TempDir::new().unwrap();
+        let cache_dir = TempDir::new().unwrap();
+        let archive = write_archive(&dir, "pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz", b"x");
+        let release = fake_release(&["pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz"]);
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+
+        let err = verify_release_checksum(
+            &client,
+            &release,
+            "pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz",
+            &archive,
+            /* allow_missing */ false,
+        )
+        .await
+        .expect_err("strict mode must reject a release without SHA256SUMS");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("does not publish a SHA256SUMS"), "got: {msg}");
+        assert!(
+            msg.contains("--allow-missing-checksum"),
+            "error should name the opt-out flag, got: {msg}"
+        );
+    }
+
+    /// Opt-in escape hatch: with `--allow-missing-checksum`, the same
+    /// missing-manifest case downgrades to a warning and returns Ok.
+    #[tokio::test]
+    async fn verify_release_checksum_allow_missing_skips_verification() {
+        let dir = TempDir::new().unwrap();
+        let cache_dir = TempDir::new().unwrap();
+        let archive = write_archive(&dir, "pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz", b"x");
+        let release = fake_release(&["pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz"]);
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+
+        verify_release_checksum(
+            &client,
+            &release,
+            "pydl-v0.0.0-x86_64-unknown-linux-musl.tar.gz",
+            &archive,
+            /* allow_missing */ true,
+        )
+        .await
+        .expect("--allow-missing-checksum must downgrade missing manifest to a warning");
     }
 }
