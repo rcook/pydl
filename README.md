@@ -81,7 +81,7 @@ Quick orientation:
 
 | Command               | Network?       | What it does                                                                                        |
 |-----------------------|----------------|-----------------------------------------------------------------------------------------------------|
-| `pydl update`         | yes            | Refresh `~/.pydl/snapshot/` (PBS releases list + latest pydl version). The only listings hit.       |
+| `pydl update`         | yes            | Refresh `~/.pydl/snapshot/` (Python releases list + latest pydl version). The only listings hit.    |
 | `pydl available`      | no             | Show releases from the local snapshot.                                                              |
 | `pydl download`       | yes            | Fetch one asset into `~/.pydl/cache/`.                                                              |
 | `pydl install`        | no             | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>`.                                     |

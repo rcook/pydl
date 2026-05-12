@@ -81,7 +81,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// [network] Refresh local snapshots of upstream releases (PBS list + latest pydl). All other commands except `download` and `self-update --online` are offline.
+    /// [network] Refresh local snapshots of upstream releases (Python releases list + latest pydl). All other commands except `download` and `self-update --online` are offline.
     Update(cmd::update::Args),
 
     /// [offline] List releases and their assets from the local snapshot. Run `pydl update` first.

@@ -75,7 +75,7 @@ pub fn run(args: Args) -> Result<()> {
     let envelope = snapshot::read_pbs_releases()?.ok_or_else(|| {
         let p = snapshot::pbs_releases_path()
             .map_or_else(|_| "<snapshot path unavailable>".to_owned(), |p| p.display().to_string());
-        anyhow!("no PBS releases snapshot found at {p}. Run `pydl update` to fetch one.")
+        anyhow!("no Python releases snapshot found at {p}. Run `pydl update` to fetch one.")
     })?;
     info!("{}", snapshot::staleness_report(envelope.fetched_at));
     let releases = &envelope.payload;

@@ -57,7 +57,7 @@ pub async fn run(_args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Paginate the PBS releases endpoint until upstream returns a partial page.
+/// Paginate the Python releases endpoint until upstream returns a partial page.
 /// Same loop shape that lived in `pydl available` before this refactor —
 /// moved here so the network usage is concentrated in `update`.
 async fn fetch_all_pbs_releases(client: &CachingClient) -> Result<Vec<Release>> {

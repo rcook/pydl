@@ -20,8 +20,8 @@ pydl self-update      [--online] [--pre] [--force] [--dry-run] [--require-checks
 
 | Subcommand            | Network?           | What it does                                                                                |
 |-----------------------|--------------------|---------------------------------------------------------------------------------------------|
-| `pydl update`         | yes                | Refresh `~/.pydl/snapshot/`: PBS releases list + latest pydl version. The only command that fetches release listings. |
-| `pydl available`      | no                 | Read the PBS releases list from the snapshot. Errors with a hint if the snapshot is missing. |
+| `pydl update`         | yes                | Refresh `~/.pydl/snapshot/`: Python releases list + latest pydl version. The only command that fetches release listings. |
+| `pydl available`      | no                 | Read the Python releases list from the snapshot. Errors with a hint if the snapshot is missing. |
 | `pydl download`       | yes                | Fetch one asset into `~/.pydl/cache/` (and optionally `-o DIR`).                            |
 | `pydl install`        | no                 | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>/`.                            |
 | `pydl installed`      | no                 | List installed assets and their paths.                                                      |
@@ -141,7 +141,7 @@ Both writes go through the same retry-with-backoff stack as the rest of `pydl`'s
 
 ### `pydl available`
 
-Read the PBS releases snapshot from `~/.pydl/snapshot/pbs-releases.json` and print either an aggregate summary or an asset listing when any filter is set. **No network.** If the snapshot is missing the command errors with `no PBS releases snapshot found at … — run \`pydl update\` to fetch one`. Every successful run also prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh.
+Read the Python releases snapshot from `~/.pydl/snapshot/pbs-releases.json` and print either an aggregate summary or an asset listing when any filter is set. **No network.** If the snapshot is missing the command errors with `no Python releases snapshot found at … — run \`pydl update\` to fetch one`. Every successful run also prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh.
 
 ```
 pydl available -t 20260414 -v 3.15.0a8

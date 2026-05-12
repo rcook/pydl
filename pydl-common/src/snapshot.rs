@@ -47,7 +47,7 @@ pub struct Envelope<T> {
 /// One asset attached to a `rcook/pydl` release.
 ///
 /// Mirrors the small set of fields `self-update` needs from the GitHub API,
-/// kept separate from the PBS-side `Asset` so the two payloads can evolve
+/// kept separate from the Python-releases-side `Asset` so the two payloads can evolve
 /// independently.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PydlReleaseAsset {
