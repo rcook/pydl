@@ -36,12 +36,14 @@ const VERSION_STRING: &str = concat!(
     long_about = "Fetch, verify, install and run Python distributions from the \
                   astral-sh/python-build-standalone release set.\n\n\
                   Network model: `pydl update` refreshes a local snapshot of the \
-                  upstream releases list and the latest pydl version; `pydl available` \
-                  and `pydl self-update` read from that snapshot and never touch the \
-                  network. The only commands that contact `api.github.com` are \
-                  `pydl update`, `pydl download` (asset bytes) and \
-                  `pydl self-update --online` (escape hatch). Run `pydl update` \
-                  periodically to stay current.\n\n\
+                  upstream releases list and the latest pydl version. `pydl available` \
+                  reads from that snapshot and never touches the network; `pydl self-update` \
+                  reads from that snapshot too but still downloads the binary itself \
+                  over the network (pass `--online` to bypass the snapshot for the \
+                  version check as well). Only `pydl update` and `pydl self-update --online` \
+                  contact `api.github.com` for *release listings*; `pydl download` and \
+                  `pydl self-update` reach out for asset bytes. Every other command is \
+                  guaranteed offline. Run `pydl update` periodically to stay current.\n\n\
                   Lifecycle: `pydl available` shows what upstream publishes; \
                   `pydl install`/`download` resolve a single asset through filter \
                   flags (`--tag`, `--version`, `--platform`, `--default-attrs`) and \
@@ -81,7 +83,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// [network] Refresh local snapshots of upstream releases (Python releases list + latest pydl). All other commands except `download` and `self-update --online` are offline.
+    /// [network] Refresh local snapshots of upstream releases (Python releases list + latest pydl). The only command that fetches release listings; everything else either runs from the snapshot or hits the network only for asset bytes (`download`, `self-update`).
     Update(cmd::update::Args),
 
     /// [offline] List releases and their assets from the local snapshot. Run `pydl update` first.
@@ -111,7 +113,7 @@ enum Cmd {
     /// [offline] Emit a shell-completion script for the given shell to stdout.
     Completions(cmd::completions::Args),
 
-    /// [offline by default; network with --online] Self-replace the running binary using the snapshot from `pydl update`. `--online` bypasses the snapshot.
+    /// [network] Self-replace the running binary with the latest released `pydl`. Reads the new version from the snapshot written by `pydl update` by default; `--online` bypasses the snapshot. The binary itself is always downloaded over the network.
     SelfUpdate(cmd::self_update::Args),
 }
 

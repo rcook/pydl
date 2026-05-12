@@ -1,8 +1,10 @@
 //! `pydl update`: refresh the local snapshots that `pydl available` and
 //! `pydl self-update` read from. This is the single command in the CLI that
-//! contacts `api.github.com` for *release listings* — every other command
-//! (except `pydl download` for asset bytes and `pydl self-update --online`
-//! for an explicit network bypass) is offline by design.
+//! contacts `api.github.com` for *release listings*. The other network-using
+//! commands (`pydl download`, `pydl self-update`) reach out only for asset
+//! bytes; `pydl self-update --online` adds a network round-trip for the
+//! version check as an explicit escape hatch. Every other subcommand is
+//! offline by design.
 //!
 //! Two snapshots are written under `~/.pydl/snapshot/`:
 //!

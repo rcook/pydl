@@ -16,7 +16,7 @@ pydl python   -t 20260414 -v 3.14.4 -- -m venv .venv
 
 - **No system Python required.** Downloads self-contained distributions that run without package-manager coordination. Useful for CI images, air-gapped machines or just avoiding conflicts with your OS Python.
 - **Reproducible.** Every asset is verified against a SHA-256 baked into the `pydl` binary at build time. Checksums are committed alongside the code, so two people running the same `pydl` on the same `(tag, version)` get bit-identical bytes.
-- **Predictable network usage.** Only `pydl update` and `pydl download` (plus `pydl self-update --online` as an explicit escape hatch) touch the network. Everything else — `available`, `install`, `python`, `pin`, `uninstall`, `installed`, `cache`, `completions` and the default `self-update` — is guaranteed offline and fast.
+- **Predictable network usage.** Only `pydl update`, `pydl download` and `pydl self-update` touch the network. Of those, `pydl update` is the only one that contacts `api.github.com` for *release listings* (which `pydl self-update --online` also does); `pydl download` and `pydl self-update` always reach out for asset bytes. Everything else — `available`, `install`, `python`, `pin`, `uninstall`, `installed`, `cache`, `completions` — is guaranteed offline and fast.
 - **Project-pinned builds.** `pydl pin` writes a `.pydl.json` file you can commit; teammates who run `pydl python -- …` in the repo pick up the same Python build automatically.
 
 ### The `update` model
@@ -91,7 +91,7 @@ Quick orientation:
 | `pydl pin`            | no             | Freeze tag/version into `.pydl.json` for the project.                                               |
 | `pydl cache`          | no             | Inspect or clear the HTTP cache.                                                                    |
 | `pydl completions`    | no             | Emit a shell-completion script.                                                                     |
-| `pydl self-update`    | only with `--online` (or always for the binary download) | Replace the running binary with the latest GitHub release. Reads the version from the snapshot by default; `--online` bypasses it. |
+| `pydl self-update`    | always         | Replace the running binary with the latest GitHub release. Reads the version from the snapshot by default; `--online` bypasses it. The binary itself is always downloaded over the network. |
 
 ## State
 

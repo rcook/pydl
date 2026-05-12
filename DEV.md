@@ -75,7 +75,7 @@ user invocation
 
 Key invariants:
 
-- **Network usage is a subcommand-level property.** Only `update`, `download` and `self-update` (always for the binary download; for the version check only with `--online`) construct network-facing paths. All other subcommands enforce this by construction. Filter resolution against the embedded checksum table — and release-list resolution against the local snapshot — is what makes this possible.
+- **Network usage is a subcommand-level property.** Only `update`, `download` and `self-update` construct network-facing paths. `update` and `self-update --online` fetch release listings; `download` and `self-update` (in any mode) fetch asset bytes. All other subcommands enforce offline-ness by construction. Filter resolution against the embedded checksum table — and release-list resolution against the local snapshot — is what makes this possible.
 - **The snapshot consolidates release-listing traffic.** `pydl update` paginates `astral-sh/python-build-standalone` releases and fetches `releases/latest` for `rcook/pydl`, then writes both as JSON under `~/.pydl/snapshot/`. `pydl available` and the default `pydl self-update` never touch the network for these listings; they read the snapshot.
 - **The cache is the handoff point for asset bytes.** `download` warms it, `install`/`python` read from it via `cached_body_path`. `update` also flows through the cache, but its product is the snapshot file, not a cached body.
 - **The embedded checksum table is the canonical "what exists" index** for offline asset resolution. Asset names encode version, triple, flavour — enough for `filter_embedded` to resolve any `FilterArgs` without the network and without the snapshot.
