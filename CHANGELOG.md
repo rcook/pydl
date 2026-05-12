@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.7] - 2026-05-12
+
+
+### Features
+- Add "update" command and change semantics of other subcommands (7c99d31)
+
+
+### Internal
+- Use saturating_add (7f47014)
+- Tweak backoff strategy (a289c77)
+- Remove references to PBD from public-facing error messages etc. (fc6600e)
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.6 (db06739)
+
 ## [0.1.6] - 2026-05-12
 
 
