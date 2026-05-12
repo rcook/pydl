@@ -25,10 +25,14 @@ pub const REPO: &str = "python-build-standalone";
 /// Page size for release-list requests. Shared so every binary keys on the
 /// same URL and hits the same cache entries.
 ///
-/// `100` is the GitHub API maximum and collapses the typical full-list crawl
-/// (~80 releases today) into one or two requests, conserving the
-/// unauthenticated rate-limit budget.
-pub const PER_PAGE: usize = 100;
+/// Set to `10` (down from the API's `100` maximum) because GitHub's edge
+/// reliably 504s while assembling the larger payloads for
+/// `astral-sh/python-build-standalone` — see `ISSUES.md` § "Open
+/// investigations" for the live measurements that motivated the drop. The
+/// trade-off is ~9 paginated GETs per `pydl update` instead of 1, which is
+/// well within the 60 req/hr unauthenticated budget for a single command.
+/// Revisit if the upstream timeout window improves.
+pub const PER_PAGE: usize = 10;
 
 /// Default client-side minimum-freshness floor in seconds (24 h). See the
 /// `pydl` README for rationale.
