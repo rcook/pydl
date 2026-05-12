@@ -386,7 +386,7 @@ fn build_meta(status: StatusCode, headers: &HeaderMap, now: u64) -> EntryMeta {
     let cc = parse_cache_control(headers);
     let expires_at = cc
         .max_age
-        .map(|s| now + s)
+        .map(|s| now.saturating_add(s))
         .or_else(|| parse_expires(headers));
 
     EntryMeta {
@@ -404,7 +404,7 @@ fn update_meta_from_headers(meta: &mut EntryMeta, headers: &HeaderMap, now: u64)
     meta.fetched_at = now;
     meta.expires_at = cc
         .max_age
-        .map(|s| now + s)
+        .map(|s| now.saturating_add(s))
         .or_else(|| parse_expires(headers))
         .or(meta.expires_at);
     meta.must_revalidate = cc.must_revalidate;
@@ -776,6 +776,13 @@ mod tests {
         let h = headers(&[("expires", "Thu, 01 Jan 1970 00:01:00 GMT")]);
         let m = build_meta(StatusCode::OK, &h, 1000);
         assert_eq!(m.expires_at, Some(60));
+    }
+
+    #[test]
+    fn build_meta_saturates_on_pathological_max_age() {
+        let h = headers(&[("cache-control", &format!("max-age={}", u64::MAX))]);
+        let m = build_meta(StatusCode::OK, &h, 1000);
+        assert_eq!(m.expires_at, Some(u64::MAX));
     }
 
     #[test]
