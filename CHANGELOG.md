@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.10] - 2026-05-12
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.9 (10a0d39)
+- Update "pydl available" to report both Python and pydl releases (b6c98fd)
+
 ## [0.1.9] - 2026-05-12
 
 
