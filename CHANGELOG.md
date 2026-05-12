@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.8] - 2026-05-12
+
+
+### Internal
+- Set PER_PAGE=10 (9cae885)
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.7 (5673f80)
+- Update documentation (3d248b0)
+
 ## [0.1.7] - 2026-05-12
 
 
