@@ -85,8 +85,8 @@ const RETRY_STATUSES: &[StatusCode] = &[
     StatusCode::GATEWAY_TIMEOUT,
 ];
 
-const MAX_ATTEMPTS: u32 = 3;
-const BASE_BACKOFF_MS: u64 = 500;
+const MAX_ATTEMPTS: u32 = 5;
+const BASE_BACKOFF_MS: u64 = 1000;
 
 /// Run a GET through the cache with bounded retries on transient upstream
 /// failures (network errors and the statuses in [`RETRY_STATUSES`]).
@@ -113,12 +113,12 @@ async fn request_with_retry(client: &CachingClient, url: &str) -> Result<(Status
     }
 }
 
-/// Backoff for retry `attempt` (1-indexed), with ±25% jitter. `500 * 3^(n-1)`
-/// before jitter: 500ms, 1500ms, 4500ms. Jitter source is the unix time's low
-/// bits — good enough to spread retries across processes without taking on a
-/// `rand` dependency.
+/// Backoff for retry `attempt` (1-indexed), with ±25% jitter. `1000 * 2^(n-1)`
+/// before jitter: 1s, 2s, 4s, 8s. Jitter source is the unix time's low bits —
+/// good enough to spread retries across processes without taking on a `rand`
+/// dependency.
 fn backoff_ms(attempt: u32) -> u64 {
-    let base = BASE_BACKOFF_MS.saturating_mul(3u64.saturating_pow(attempt.saturating_sub(1)));
+    let base = BASE_BACKOFF_MS.saturating_mul(2u64.saturating_pow(attempt.saturating_sub(1)));
     let jitter_seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::from(d.subsec_nanos()));
@@ -222,7 +222,10 @@ mod tests {
         assert!(out.len() < 500, "got len {}: {out}", out.len());
     }
 
-    #[tokio::test]
+    // `start_paused = true` so the multi-second backoff sleeps in
+    // `request_with_retry` advance via tokio's virtual clock instead of
+    // blocking the test on wall time.
+    #[tokio::test(start_paused = true)]
     async fn fetch_releases_page_retries_on_504_then_succeeds() {
         let dir = TempDir::new().unwrap();
         let client = make_test_client(&dir);
@@ -247,7 +250,7 @@ mod tests {
         assert_eq!(body, b"[]");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn fetch_releases_page_gives_up_after_max_attempts() {
         let dir = TempDir::new().unwrap();
         let client = make_test_client(&dir);
@@ -295,17 +298,17 @@ mod tests {
 
     #[test]
     fn backoff_ms_grows_with_attempt() {
-        // ±25% jitter means attempt 1 lies in [375, 625], attempt 2 in
-        // [1125, 1875], attempt 3 in [3375, 5625]. Just check the bands don't
-        // overlap.
+        // ±25% jitter on a 1000ms base doubling per attempt means attempt 1
+        // lies in [750, 1250], attempt 2 in [1500, 2500], attempt 3 in
+        // [3000, 5000]. Just check the bands don't overlap.
         let a1 = backoff_ms(1);
         let a2 = backoff_ms(2);
         assert!(
-            (375..=625).contains(&a1),
+            (750..=1250).contains(&a1),
             "attempt 1 jitter out of band: {a1}"
         );
         assert!(
-            (1125..=1875).contains(&a2),
+            (1500..=2500).contains(&a2),
             "attempt 2 jitter out of band: {a2}"
         );
     }
