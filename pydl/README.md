@@ -4,7 +4,7 @@ Download, verify, install and run the standalone Python distributions published 
 
 ```
 pydl update
-pydl available        [filter flags]
+pydl available        [--python | --pydl] [filter flags]
 pydl download         [filter flags] [-o DIR]
 pydl install          [filter flags]
 pydl installed        [filter flags]
@@ -21,7 +21,7 @@ pydl self-update      [--online] [--pre] [--force] [--dry-run] [--require-checks
 | Subcommand            | Network?           | What it does                                                                                |
 |-----------------------|--------------------|---------------------------------------------------------------------------------------------|
 | `pydl update`         | yes                | Refresh `~/.pydl/snapshot/`: Python releases list + latest pydl version. The only command that fetches release listings. |
-| `pydl available`      | no                 | Read the Python releases list from the snapshot. Errors with a hint if the snapshot is missing. |
+| `pydl available`      | no                 | Read the snapshot and show what's available — both Python releases and the latest pydl version. `--python` / `--pydl` scope to one section. |
 | `pydl download`       | yes                | Fetch one asset into `~/.pydl/cache/` (and optionally `-o DIR`).                            |
 | `pydl install`        | no                 | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>/`.                            |
 | `pydl installed`      | no                 | List installed assets and their paths.                                                      |
@@ -141,10 +141,32 @@ Both writes go through the same retry-with-backoff stack as the rest of `pydl`'s
 
 ### `pydl available`
 
-Read the Python releases snapshot from `~/.pydl/snapshot/pbs-releases.json` and print either an aggregate summary or an asset listing when any filter is set. **No network.** If the snapshot is missing the command errors with `no Python releases snapshot found at … — run \`pydl update\` to fetch one`. Every successful run also prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh.
+Read the local snapshot at `~/.pydl/snapshot/` and report what's available — both Python releases and the latest pydl version. **No network.** Every successful run prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh. If a required snapshot is missing the command errors with `no … snapshot found at … — run \`pydl update\` to fetch one`.
+
+Default invocation (no flags) prints three lines:
 
 ```
-pydl available -t 20260414 -v 3.15.0a8
+$ pydl available
+snapshot from 3 hours ago
+pydl: latest v0.1.7 (you are up to date)
+Python releases: 113 (latest tag 20260512, 2 days ago upstream)
+```
+
+Flags:
+
+| Flag                | Effect                                                                                            |
+|---------------------|---------------------------------------------------------------------------------------------------|
+| `--python`          | Show only the Python releases section. Default behaviour switches from the one-line summary to the full detailed listing. |
+| `--pydl`            | Show only the latest-pydl-version line. Suppresses the Python section entirely. Mutually exclusive with `--python` and with any filter flag. |
+| `-t`, `-v`, `--platform`, `--no-platform`, `--default-attrs`, `--no-default-attrs` | Filter flags; implicitly select `--python` and switch to a per-asset listing. |
+
+Examples:
+
+```
+pydl available                              # both sections (short)
+pydl available --python                     # full Python listing, no pydl line
+pydl available --pydl                       # one-line pydl version status
+pydl available -t 20260414 -v 3.15.0a8      # filtered Python listing
 ```
 
 ### `pydl download`

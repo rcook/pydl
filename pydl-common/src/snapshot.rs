@@ -197,6 +197,114 @@ pub fn staleness_report(fetched_at: u64) -> String {
     }
 }
 
+/// One-line summary of the pydl version snapshot. Used by both
+/// `pydl available` and the trailer of `pydl update` so the wording is
+/// identical across producer and consumer.
+///
+/// Three shapes:
+/// - `running == latest`: `pydl: latest v0.1.7 (you are up to date)`
+/// - `running <  latest`: `pydl: latest v0.1.7 (running v0.1.6 — run `pydl self-update`)`
+/// - `running >  latest`: `pydl: latest v0.1.7 (running v0.1.8, ahead of latest)`
+#[must_use]
+pub fn format_pydl_version_line(running: &semver::Version, latest: &semver::Version) -> String {
+    use std::cmp::Ordering;
+    match running.cmp(latest) {
+        Ordering::Equal => format!("pydl: latest v{latest} (you are up to date)"),
+        Ordering::Less => {
+            format!("pydl: latest v{latest} (running v{running} — run `pydl self-update`)")
+        }
+        Ordering::Greater => {
+            format!("pydl: latest v{latest} (running v{running}, ahead of latest)")
+        }
+    }
+}
+
+/// One-line short summary of the Python releases snapshot.
+///
+/// Used by `pydl available` (default mode, no filters) and by the trailer
+/// of `pydl update`. The relative-age suffix uses `humanize_age` against
+/// the first release's `published_at`; if that field is missing or
+/// unparseable the suffix is omitted gracefully.
+///
+/// Shapes:
+/// - With a parseable `published_at`: `Python releases: 113 (latest tag 20260512, 2 days ago upstream)`
+/// - Without:                          `Python releases: 113 (latest tag 20260512)`
+/// - Empty list:                       `Python releases: 0`
+#[must_use]
+pub fn format_python_releases_short_summary(releases: &[Release]) -> String {
+    let total = releases.len();
+    let Some(latest) = releases.first() else {
+        return format!("Python releases: {total}");
+    };
+    let tag = &latest.tag_name;
+    let now = unix_now();
+    if let Some(published_at) = latest.published_at.as_deref()
+        && let Some(published_secs) = parse_iso8601_z(published_at)
+    {
+        let age = humanize_age(now, published_secs);
+        format!("Python releases: {total} (latest tag {tag}, {age} upstream)")
+    } else {
+        format!("Python releases: {total} (latest tag {tag})")
+    }
+}
+
+/// Parse the narrow RFC 3339 shape GitHub returns for `published_at`,
+/// e.g. `2026-05-12T00:00:00Z`. Returns the corresponding unix seconds, or
+/// `None` if the input doesn't match the expected shape. Deliberately
+/// minimal — we don't depend on `chrono` and only need the GitHub-shaped
+/// subset.
+fn parse_iso8601_z(s: &str) -> Option<u64> {
+    // Expect exactly: YYYY-MM-DDTHH:MM:SSZ (20 chars).
+    let bytes = s.as_bytes();
+    if bytes.len() != 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+    {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: u32 = s.get(5..7)?.parse().ok()?;
+    let day: u32 = s.get(8..10)?.parse().ok()?;
+    let hour: u32 = s.get(11..13)?.parse().ok()?;
+    let minute: u32 = s.get(14..16)?.parse().ok()?;
+    let second: u32 = s.get(17..19)?.parse().ok()?;
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    // Days from 1970-01-01 to the given (year, month, day), via Howard
+    // Hinnant's date algorithm (civil_from_days, inverted). Handles all the
+    // calendar quirks without bringing in chrono.
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    // `y - era * 400` is in `[0, 400)` by construction of `div_euclid`, so
+    // the i64→u64 cast is lossless.
+    let yoe = (y - era * 400).cast_unsigned();
+    let m = u64::from(month);
+    let d = u64::from(day);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    // `doe` fits in 32 bits (146,097 max); the cast is lossless.
+    let days_since_epoch = era * 146_097 + doe.cast_signed() - 719_468;
+    if days_since_epoch < 0 {
+        return None;
+    }
+    // Guarded above; cast is lossless.
+    let secs = days_since_epoch.cast_unsigned() * 86_400
+        + u64::from(hour) * 3_600
+        + u64::from(minute) * 60
+        + u64::from(second);
+    Some(secs)
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -205,8 +313,9 @@ fn unix_now() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn fake_release(tag: &str) -> Release {
         Release {
@@ -309,5 +418,120 @@ mod tests {
         let s = staleness_report(fresh_at);
         assert!(!s.contains("pydl update"), "got: {s}");
         assert!(s.contains("snapshot from"), "got: {s}");
+    }
+
+    fn v(s: &str) -> semver::Version {
+        semver::Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn format_pydl_version_line_up_to_date() {
+        let s = format_pydl_version_line(&v("0.1.7"), &v("0.1.7"));
+        assert_eq!(s, "pydl: latest v0.1.7 (you are up to date)");
+    }
+
+    #[test]
+    fn format_pydl_version_line_newer_available() {
+        let s = format_pydl_version_line(&v("0.1.6"), &v("0.1.7"));
+        assert_eq!(
+            s,
+            "pydl: latest v0.1.7 (running v0.1.6 — run `pydl self-update`)"
+        );
+    }
+
+    #[test]
+    fn format_pydl_version_line_running_newer() {
+        let s = format_pydl_version_line(&v("0.1.8"), &v("0.1.7"));
+        assert_eq!(s, "pydl: latest v0.1.7 (running v0.1.8, ahead of latest)");
+    }
+
+    fn release_with_published(tag: &str, published_at: Option<&str>) -> Release {
+        Release {
+            tag_name: tag.to_owned(),
+            name: Some(tag.to_owned()),
+            draft: false,
+            prerelease: false,
+            published_at: published_at.map(ToOwned::to_owned),
+            assets: vec![],
+        }
+    }
+
+    #[test]
+    fn format_python_releases_short_summary_basic() {
+        // Use a date close to "now" so the relative-age suffix is stable in
+        // shape regardless of when the test is run.
+        let now = unix_now();
+        let one_day_ago = now.saturating_sub(24 * 60 * 60);
+        let day_iso = unix_to_iso8601_z(one_day_ago);
+        let releases = vec![
+            release_with_published("20260512", Some(&day_iso)),
+            release_with_published("20260505", Some(&day_iso)),
+        ];
+        let s = format_python_releases_short_summary(&releases);
+        assert!(
+            s.starts_with("Python releases: 2 (latest tag 20260512,"),
+            "got: {s}"
+        );
+        assert!(s.ends_with("upstream)"), "got: {s}");
+    }
+
+    #[test]
+    fn format_python_releases_short_summary_handles_unparseable_date() {
+        let releases = vec![release_with_published("20260512", Some("not a date"))];
+        let s = format_python_releases_short_summary(&releases);
+        assert_eq!(s, "Python releases: 1 (latest tag 20260512)");
+    }
+
+    #[test]
+    fn format_python_releases_short_summary_no_published_at() {
+        let releases = vec![release_with_published("20260512", None)];
+        let s = format_python_releases_short_summary(&releases);
+        assert_eq!(s, "Python releases: 1 (latest tag 20260512)");
+    }
+
+    #[test]
+    fn format_python_releases_short_summary_empty() {
+        let s = format_python_releases_short_summary(&[]);
+        assert_eq!(s, "Python releases: 0");
+    }
+
+    #[test]
+    fn parse_iso8601_z_known_anchor() {
+        // 2026-05-12T00:00:00Z should be exactly (2026-1970)*365.25 days,
+        // adjusted for actual leap years. Cross-check by round-tripping
+        // through the inverse helper used in this test suite.
+        let s = "2026-05-12T00:00:00Z";
+        let secs = parse_iso8601_z(s).expect("parses");
+        assert_eq!(unix_to_iso8601_z(secs), s);
+    }
+
+    #[test]
+    fn parse_iso8601_z_rejects_bad_shape() {
+        assert!(parse_iso8601_z("not a date").is_none());
+        assert!(parse_iso8601_z("2026/05/12T00:00:00Z").is_none());
+        assert!(parse_iso8601_z("2026-05-12T00:00:00").is_none()); // no Z
+        assert!(parse_iso8601_z("2026-13-12T00:00:00Z").is_none()); // bad month
+    }
+
+    /// Inverse of `parse_iso8601_z` for test fixtures only. Same Howard
+    /// Hinnant date algorithm, run forward.
+    fn unix_to_iso8601_z(secs: u64) -> String {
+        // For any plausible test input this fits in i64 trivially.
+        let days = (secs / 86_400).cast_signed();
+        let time_of_day = secs % 86_400;
+        let hour = time_of_day / 3_600;
+        let minute = (time_of_day % 3_600) / 60;
+        let second = time_of_day % 60;
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = (z - era * 146_097).cast_unsigned();
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe.cast_signed() + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let year = if m <= 2 { y + 1 } else { y };
+        format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
     }
 }

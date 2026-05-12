@@ -1150,6 +1150,7 @@ dependencies = [
  "futures-util",
  "log",
  "pydl-cache",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

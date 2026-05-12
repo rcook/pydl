@@ -82,7 +82,7 @@ Quick orientation:
 | Command               | Network?       | What it does                                                                                        |
 |-----------------------|----------------|-----------------------------------------------------------------------------------------------------|
 | `pydl update`         | yes            | Refresh `~/.pydl/snapshot/` (Python releases list + latest pydl version). The only listings hit.    |
-| `pydl available`      | no             | Show releases from the local snapshot.                                                              |
+| `pydl available`      | no             | Show what's available from the local snapshot — Python releases plus the latest pydl version.       |
 | `pydl download`       | yes            | Fetch one asset into `~/.pydl/cache/`.                                                              |
 | `pydl install`        | no             | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>`.                                     |
 | `pydl installed`      | no             | List what's installed locally.                                                                      |

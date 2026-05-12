@@ -18,11 +18,12 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use log::{debug, info};
+use log::{debug, info, warn};
 use pydl_cache::{CachingClient, Method, StatusCode};
 use pydl_common::filter::Release;
 use pydl_common::snapshot::{self, PydlRelease};
 use pydl_common::{PER_PAGE, fetch_releases_page, make_client, min_freshness_secs};
+use semver::Version;
 
 const SELF_OWNER: &str = "rcook";
 const SELF_REPO: &str = "pydl";
@@ -56,7 +57,39 @@ pub async fn run(_args: Args) -> Result<()> {
         snapshot::pydl_latest_path()?.display()
     );
 
+    // Trailer: print exactly what `pydl available` will print after this
+    // run, so the user sees the same wording from producer and consumer.
+    info!("");
+    info!(
+        "{}",
+        snapshot::format_python_releases_short_summary(&releases)
+    );
+    emit_pydl_trailer(&pydl_latest);
+
     Ok(())
+}
+
+/// Print the canonical `pydl: latest …` line for a freshly-written
+/// snapshot. Non-fatal: a non-semver running version or upstream tag logs
+/// a warning and skips the line — the snapshot itself is already on disc.
+fn emit_pydl_trailer(release: &PydlRelease) {
+    let running_str = env!("CARGO_PKG_VERSION");
+    let Ok(running) = Version::parse(running_str) else {
+        warn!("could not parse running version {running_str:?} as semver; skipping pydl trailer");
+        return;
+    };
+    let latest_str = release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name);
+    let Ok(latest) = Version::parse(latest_str) else {
+        warn!(
+            "could not parse snapshot latest tag {:?} as semver; skipping pydl trailer",
+            release.tag_name
+        );
+        return;
+    };
+    info!("{}", snapshot::format_pydl_version_line(&running, &latest));
 }
 
 /// Paginate the Python releases endpoint until upstream returns a partial page.
