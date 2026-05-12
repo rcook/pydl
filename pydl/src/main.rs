@@ -35,6 +35,13 @@ const VERSION_STRING: &str = concat!(
     about = "Download, install and run python-build-standalone distributions.",
     long_about = "Fetch, verify, install and run Python distributions from the \
                   astral-sh/python-build-standalone release set.\n\n\
+                  Network model: `pydl update` refreshes a local snapshot of the \
+                  upstream releases list and the latest pydl version; `pydl available` \
+                  and `pydl self-update` read from that snapshot and never touch the \
+                  network. The only commands that contact `api.github.com` are \
+                  `pydl update`, `pydl download` (asset bytes) and \
+                  `pydl self-update --online` (escape hatch). Run `pydl update` \
+                  periodically to stay current.\n\n\
                   Lifecycle: `pydl available` shows what upstream publishes; \
                   `pydl install`/`download` resolve a single asset through filter \
                   flags (`--tag`, `--version`, `--platform`, `--default-attrs`) and \
@@ -44,7 +51,8 @@ const VERSION_STRING: &str = concat!(
                   interpreter, and `pydl pin` freezes a filter set into a \
                   `.pydl.json` pin that sibling subcommands will pick up \
                   automatically. Responses are served from a disc cache at \
-                  `$HOME/.pydl/cache/`; installs live under `$HOME/.pydl/asset/`."
+                  `$HOME/.pydl/cache/`; the snapshot lives at `$HOME/.pydl/snapshot/`; \
+                  installs live under `$HOME/.pydl/asset/`."
 )]
 pub struct Cli {
     /// Log filter directive (overrides `RUST_LOG`). Accepts the same syntax
@@ -73,7 +81,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// [network] List releases and their assets that are available upstream.
+    /// [network] Refresh local snapshots of upstream releases (PBS list + latest pydl). All other commands except `download` and `self-update --online` are offline.
+    Update(cmd::update::Args),
+
+    /// [offline] List releases and their assets from the local snapshot. Run `pydl update` first.
     Available(cmd::available::Args),
 
     /// [network] Fetch a single asset into ~/.pydl/cache/ (and optionally copy it to --output-dir).
@@ -100,7 +111,7 @@ enum Cmd {
     /// [offline] Emit a shell-completion script for the given shell to stdout.
     Completions(cmd::completions::Args),
 
-    /// [network] Check GitHub releases and self-replace the running binary if a newer pydl is available.
+    /// [offline by default; network with --online] Self-replace the running binary using the snapshot from `pydl update`. `--online` bypasses the snapshot.
     SelfUpdate(cmd::self_update::Args),
 }
 
@@ -121,7 +132,8 @@ async fn main() -> Result<()> {
     }
     builder.init();
     match cli.cmd {
-        Cmd::Available(args) => cmd::available::run(args).await,
+        Cmd::Update(args) => cmd::update::run(args).await,
+        Cmd::Available(args) => cmd::available::run(args),
         Cmd::Download(args) => cmd::download::run(args).await,
         Cmd::Install(args) => cmd::install::run(args),
         Cmd::Installed(args) => cmd::installed::run(args),

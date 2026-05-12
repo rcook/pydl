@@ -1,6 +1,6 @@
 # Developer Guide
 
-This document describes the workflow for working on the `pydl` workspace: layout, how the crates fit together, how to build and test, how to run the lints and formatter, what the CI-style verification step looks like, and the periodic maintenance tasks.
+This document describes the workflow for working on the `pydl` workspace: layout, how the crates fit together, how to build and test, how to run the lints and formatter, what the CI-style verification step looks like and the periodic maintenance tasks.
 
 User-facing documentation lives in [`pydl/README.md`](./pydl/README.md). The design rationale for `pydl`'s verification model lives in [`DESIGN.md`](./DESIGN.md).
 
@@ -50,33 +50,38 @@ Two crates carry a `build.rs`: `pydl-common` embeds the SHA-256 checksum table (
 user invocation
       │
       ▼
-   pydl (main.rs + cmd/*.rs)           ← subcommand dispatch
+   pydl (main.rs + cmd/*.rs)            ← subcommand dispatch
       │
       ▼
-   pydl-common::filter                 ← resolve flag bundle → (tag, asset_name)
+   pydl-common::filter                  ← resolve flag bundle → (tag, asset_name)
       │   (runs against the embedded
       │    checksum table for offline
-      │    subcommands; fetch_releases_page
-      │    for `pydl available`)
+      │    subcommands)
+      │
+      ▼ (network-facing path used by    pydl-common::snapshot     ← ~/.pydl/snapshot/
+        `update` and `download`;        (written by `update`,
+        `update` also writes the         read by `available` /
+        snapshot consumed by             `self-update`)
+        `available` / `self-update`)
+   pydl-cache::CachingClient            ← HTTP cache at ~/.pydl/cache/
+      │   (populated by `update` /
+      │    `download` / `self-update`;
+      │    read by `install` / `python`
+      │    via cached_body_path)
       ▼
-   pydl-cache::CachingClient           ← HTTP cache at ~/.pydl/cache/
-      │   (populated by `available` /
-      │    `download` only; read by
-      │    `install` / `python` via
-      │    cached_body_path)
-      ▼
-   pydl-common::install                ← verify SHA-256, unpack into ~/.pydl/asset/<hash>/
+   pydl-common::install                 ← verify SHA-256, unpack into ~/.pydl/asset/<hash>/
 ```
 
 Key invariants:
 
-- **Network usage is a subcommand-level property.** Only `available` and `download` may hit the network. All other subcommands enforce this by construction — they never construct a network-facing path. Filter resolution against the embedded checksum table is what makes this possible.
-- **The cache is the handoff point.** `download` warms it, `install`/`python` read from it via `cached_body_path`.
-- **The embedded checksum table is the canonical "what exists" index** for offline subcommands. Asset names encode version, triple, flavour — enough for `filter_embedded` to resolve any `FilterArgs` without the network.
+- **Network usage is a subcommand-level property.** Only `update`, `download` and `self-update` (always for the binary download; for the version check only with `--online`) construct network-facing paths. All other subcommands enforce this by construction. Filter resolution against the embedded checksum table — and release-list resolution against the local snapshot — is what makes this possible.
+- **The snapshot consolidates release-listing traffic.** `pydl update` paginates `astral-sh/python-build-standalone` releases and fetches `releases/latest` for `rcook/pydl`, then writes both as JSON under `~/.pydl/snapshot/`. `pydl available` and the default `pydl self-update` never touch the network for these listings; they read the snapshot.
+- **The cache is the handoff point for asset bytes.** `download` warms it, `install`/`python` read from it via `cached_body_path`. `update` also flows through the cache, but its product is the snapshot file, not a cached body.
+- **The embedded checksum table is the canonical "what exists" index** for offline asset resolution. Asset names encode version, triple, flavour — enough for `filter_embedded` to resolve any `FilterArgs` without the network and without the snapshot.
 
 ## Self-update
 
-`pydl self-update` is the one subcommand that operates on the `pydl` binary itself rather than on python-build-standalone assets. It hits GitHub's `releases/latest` endpoint for [`rcook/pydl`](https://github.com/rcook/pydl) (or the paged `releases?per_page=10` list when `--pre` is set), compares the running `CARGO_PKG_VERSION` against the latest tag via [`semver`](https://crates.io/crates/semver), downloads the matching archive through the existing `pydl-cache::CachingClient`, extracts the single `pydl` / `pydl.exe` binary, and atomically swaps the running executable via [`self_replace`](https://crates.io/crates/self-replace).
+`pydl self-update` is the one subcommand that operates on the `pydl` binary itself rather than on python-build-standalone assets. By default it reads the latest version from the snapshot written by `pydl update` (under `~/.pydl/snapshot/pydl-latest.json`); pass `--online` to bypass the snapshot and hit `releases/latest` for [`rcook/pydl`](https://github.com/rcook/pydl) directly (or the paged `releases?per_page=10` list when `--pre` is set, which requires `--online`). It compares the running `CARGO_PKG_VERSION` against the latest tag via [`semver`](https://crates.io/crates/semver), downloads the matching archive through the existing `pydl-cache::CachingClient`, extracts the single `pydl` / `pydl.exe` binary and atomically swaps the running executable via [`self_replace`](https://crates.io/crates/self-replace).
 
 A few mechanics worth knowing when modifying this code:
 
@@ -151,12 +156,14 @@ The cache library carries the bulk of the test suite, covering freshness, revali
 
 ## Running the binaries
 
-- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `cache`, `completions`, `self-update`. See [`pydl/README.md`](./pydl/README.md) for full details.
+- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `update`, `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `cache`, `completions`, `self-update`. See [`pydl/README.md`](./pydl/README.md) for full details.
 - **`./dev.sh get-checksums <dir>`** — project maintenance: mirrors every per-release `SHA256SUMS` into `<dir>` (by convention `./checksums/`). Idempotent; the results are embedded into `pydl` at build time for offline verification.
 - **`./dev.sh check-checksums <dir>`** — CI trip-wire: verifies every `<dir>/<tag>.sha256sums` file is bit-exact with what upstream currently serves. Exits non-zero on any mismatch. Used by `.github/workflows/check-checksums.yml`. See [`check-checksums/README.md`](./check-checksums/README.md).
 - **`./dev.sh install-pydl`** — builds `pydl` in release mode and copies the resulting binary to `~/.local/bin/pydl`, creating the directory if needed. Warns if `~/.local/bin` is not on your `PATH`. Re-run after any change you want to exercise via a `pydl` on `PATH` rather than through `cargo run`.
 
-The HTTP cache (`~/.pydl/cache/` on Unix, `%USERPROFILE%\.pydl\cache\` on Windows) is shared across all binaries that touch it: `pydl available`, `pydl download`, `get-checksums` and `check-checksums` all populate it; `pydl install` and `pydl python` read from it via `pydl-cache::CachingClient::cached_body_path` without revalidating. Debug-level logs from `pydl_cache` surface the per-request HIT/MISS/STALE transitions.
+The HTTP cache (`~/.pydl/cache/` on Unix, `%USERPROFILE%\.pydl\cache\` on Windows) is shared across all binaries that touch it: `pydl update`, `pydl download`, `pydl self-update`, `get-checksums` and `check-checksums` all populate it; `pydl install` and `pydl python` read from it via `pydl-cache::CachingClient::cached_body_path` without revalidating. Debug-level logs from `pydl_cache` surface the per-request HIT/MISS/STALE transitions.
+
+Separate from the HTTP cache, `~/.pydl/snapshot/` holds the JSON snapshots written by `pydl update`. The cache is keyed by URL and revalidates against upstream; the snapshot is opaque to the cache and is rewritten wholesale on every `pydl update`. Clearing one does not affect the other.
 
 ## Refreshing the embedded checksum set
 

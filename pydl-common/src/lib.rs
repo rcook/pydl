@@ -8,6 +8,7 @@ pub mod config;
 pub mod filter;
 pub mod install;
 pub mod platform;
+pub mod snapshot;
 
 use std::env;
 use std::path::PathBuf;
@@ -129,7 +130,7 @@ fn backoff_ms(attempt: u32) -> u64 {
 }
 
 /// Format a non-2xx response body for inclusion in an error message. Keeps
-/// short text/JSON bodies verbatim, summarises HTML (typical for upstream
+/// short text/JSON bodies verbatim, summarizes HTML (typical for upstream
 /// error pages) and other large bodies as a one-line `(N-byte ... body)`.
 fn format_error_body(body: &[u8]) -> String {
     const MAX: usize = 200;
@@ -192,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn format_error_body_html_is_summarised() {
+    fn format_error_body_html_is_summarized() {
         let body = b"<!DOCTYPE html><html><body>504 Gateway Timeout, lots of content here that should not appear in the error message</body></html>";
         let out = format_error_body(body);
         assert!(out.contains("HTML body"), "got: {out}");
@@ -201,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn format_error_body_html_with_leading_whitespace_still_summarised() {
+    fn format_error_body_html_with_leading_whitespace_still_summarized() {
         let body = b"\n  <!DOCTYPE html><html></html>";
         let out = format_error_body(body);
         assert!(out.contains("HTML body"), "got: {out}");

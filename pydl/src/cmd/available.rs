@@ -1,9 +1,9 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
-use log::{debug, info};
+use log::info;
 use pydl_common::asset::asset_sort_key;
 use pydl_common::filter::{Asset, FilterArgs, Release, filter_releases};
-use pydl_common::{PER_PAGE, fetch_releases_page, make_client, min_freshness_secs};
+use pydl_common::snapshot;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -11,7 +11,7 @@ pub struct Args {
     pub filter: FilterArgs,
 }
 
-fn print_summary(all_releases: &[Release], pages: usize) {
+fn print_summary(all_releases: &[Release]) {
     let total = all_releases.len();
     let drafts = all_releases.iter().filter(|r| r.draft).count();
     let prereleases = all_releases.iter().filter(|r| r.prerelease).count();
@@ -21,7 +21,7 @@ fn print_summary(all_releases: &[Release], pages: usize) {
         .flat_map(|r| r.assets.iter().map(|a| a.size))
         .sum();
 
-    info!("crawled {pages} page(s), {total} release(s)");
+    info!("snapshot has {total} release(s)");
     info!("  drafts: {drafts}, prereleases: {prereleases}");
     info!("  assets: {total_assets}, total size: {total_asset_bytes} bytes");
 
@@ -69,30 +69,23 @@ fn print_filtered(groups: &[(&Release, Vec<&Asset>)]) {
     }
 }
 
-pub async fn run(args: Args) -> Result<()> {
-    let min_freshness = min_freshness_secs()?;
-    debug!("cache min-freshness floor: {min_freshness}s");
-    let client = make_client(crate::USER_AGENT, min_freshness)?;
-
-    let mut all_releases = Vec::new();
-    let mut page = 1usize;
-    loop {
-        debug!("fetching releases page {page}");
-        let releases: Vec<Release> = fetch_releases_page(&client, page, PER_PAGE).await?;
-        let got = releases.len();
-        all_releases.extend(releases);
-        if got < PER_PAGE {
-            break;
-        }
-        page += 1;
-    }
+// `args` by value matches the dispatch shape of every other subcommand.
+#[allow(clippy::needless_pass_by_value)]
+pub fn run(args: Args) -> Result<()> {
+    let envelope = snapshot::read_pbs_releases()?.ok_or_else(|| {
+        let p = snapshot::pbs_releases_path()
+            .map_or_else(|_| "<snapshot path unavailable>".to_owned(), |p| p.display().to_string());
+        anyhow!("no PBS releases snapshot found at {p}. Run `pydl update` to fetch one.")
+    })?;
+    info!("{}", snapshot::staleness_report(envelope.fetched_at));
+    let releases = &envelope.payload;
 
     let resolved = args.filter.resolve();
     if args.filter.any_asset_filter(&resolved) {
-        let groups = filter_releases(&all_releases, resolved)?;
+        let groups = filter_releases(releases, resolved)?;
         print_filtered(&groups);
     } else {
-        print_summary(&all_releases, page);
+        print_summary(releases);
     }
 
     Ok(())

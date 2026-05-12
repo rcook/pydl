@@ -3,6 +3,7 @@
 Download, verify, install and run the standalone Python distributions published by [`astral-sh/python-build-standalone`](https://github.com/astral-sh/python-build-standalone).
 
 ```
+pydl update
 pydl available        [filter flags]
 pydl download         [filter flags] [-o DIR]
 pydl install          [filter flags]
@@ -12,25 +13,37 @@ pydl python           [filter flags] -- [python args]
 pydl pin              [filter flags]
 pydl cache            {info,clear [--yes]}
 pydl completions      <SHELL>
-pydl self-update      [--pre] [--force] [--dry-run] [--require-checksum]
+pydl self-update      [--online] [--pre] [--force] [--dry-run] [--require-checksum]
 ```
 
 ## Subcommands at a glance
 
-| Subcommand            | Network? | What it does                                                         |
-|-----------------------|----------|----------------------------------------------------------------------|
-| `pydl available`      | yes      | Crawl the upstream release list (live; cache short-circuits fresh page fetches). |
-| `pydl download`       | yes      | Fetch one asset into `~/.pydl/cache/` (and optionally `-o DIR`).     |
-| `pydl install`        | no       | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>/`.     |
-| `pydl installed`      | no       | List installed assets and their paths.                               |
-| `pydl uninstall`      | no       | Remove an installed asset (dry-run by default; `--yes` to delete).   |
-| `pydl python -- …`    | no       | Run a previously-installed interpreter.                              |
-| `pydl pin`            | no       | Freeze a filter into `.pydl.json` for the project.                   |
-| `pydl cache`          | no       | Inspect or clear the on-disc HTTP cache.                             |
-| `pydl completions`    | no       | Emit a shell-completion script to stdout.                            |
-| `pydl self-update`    | yes      | Replace the running binary with the latest `rcook/pydl` release.     |
+| Subcommand            | Network?           | What it does                                                                                |
+|-----------------------|--------------------|---------------------------------------------------------------------------------------------|
+| `pydl update`         | yes                | Refresh `~/.pydl/snapshot/`: PBS releases list + latest pydl version. The only command that fetches release listings. |
+| `pydl available`      | no                 | Read the PBS releases list from the snapshot. Errors with a hint if the snapshot is missing. |
+| `pydl download`       | yes                | Fetch one asset into `~/.pydl/cache/` (and optionally `-o DIR`).                            |
+| `pydl install`        | no                 | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>/`.                            |
+| `pydl installed`      | no                 | List installed assets and their paths.                                                      |
+| `pydl uninstall`      | no                 | Remove an installed asset (dry-run by default; `--yes` to delete).                          |
+| `pydl python -- …`    | no                 | Run a previously-installed interpreter.                                                     |
+| `pydl pin`            | no                 | Freeze a filter into `.pydl.json` for the project.                                          |
+| `pydl cache`          | no                 | Inspect or clear the on-disc HTTP cache.                                                    |
+| `pydl completions`    | no                 | Emit a shell-completion script to stdout.                                                   |
+| `pydl self-update`    | only with `--online` for the version check; always for the binary download | Replace the running binary with the latest `rcook/pydl` release. Reads the version from the snapshot by default; `--online` bypasses the snapshot. |
 
-**`pydl available`, `pydl download` and `pydl self-update` are the only commands that touch the network.** Everything else is guaranteed offline: filter resolution (`-v 3.14.4` → concrete tag) runs against the SHA-256 checksum table embedded in the `pydl` binary at build time; asset bytes come from whatever `pydl download` previously placed in the cache. If `pydl install` or `pydl python` is asked to operate on an asset whose archive isn't in the cache, it fails with `… isn't in the cache — run 'pydl download -t X -v Y' first` so you always know when a network round-trip is about to happen.
+**Only `pydl update`, `pydl download` and `pydl self-update --online` contact `api.github.com` for release listings.** Everything else — including the default `pydl self-update` — is guaranteed offline for the version-resolution step. Filter resolution (`-v 3.14.4` → concrete tag) runs against the SHA-256 checksum table embedded in the `pydl` binary at build time; asset bytes come from whatever `pydl download` previously placed in the cache; release listings come from the local snapshot written by `pydl update`. If a command needs the snapshot and finds none, it fails with a clear hint to run `pydl update` first; if `pydl install` or `pydl python` is asked to operate on an asset whose archive isn't in the cache, it fails with `… isn't in the cache — run 'pydl download -t X -v Y' first` so you always know when a network round-trip is about to happen.
+
+### The snapshot model
+
+`pydl update` is the single command that fetches release listings from upstream. It writes two files under `~/.pydl/snapshot/`:
+
+- `pbs-releases.json` — the full paginated list of `astral-sh/python-build-standalone` releases, consumed by `pydl available`.
+- `pydl-latest.json` — the latest `rcook/pydl` release plus its assets, consumed by `pydl self-update`.
+
+`pydl available` and `pydl self-update` always print the snapshot's age (`snapshot from 3 hours ago`) and add a `run \`pydl update\` to refresh` hint when the snapshot is older than 7 days. With no snapshot present those commands error out — they never silently fall back to the network.
+
+The snapshot is **not** part of the trust model: `install` still resolves against the embedded checksum set, `download` still verifies SHA-256 against committed checksums and `self-update` still verifies the downloaded binary against the release's `SHA256SUMS` manifest. See [`../DESIGN.md`](../DESIGN.md) for details.
 
 ## Filter flags
 
@@ -116,9 +129,19 @@ If no embedded tag carries the version under the current filters, the subcommand
 
 ## Subcommands
 
+### `pydl update`
+
+Refresh the local snapshot under `~/.pydl/snapshot/`: paginate the `astral-sh/python-build-standalone` releases listing and write `pbs-releases.json`, then fetch `releases/latest` for `rcook/pydl` and write `pydl-latest.json`. This is the one command that contacts `api.github.com` for release listings. Run it whenever you want `pydl available` or `pydl self-update` to see fresher upstream state — typically before exploring what's available, or after seeing a `run \`pydl update\` to refresh` hint.
+
+```
+pydl update
+```
+
+Both writes go through the same retry-with-backoff stack as the rest of `pydl`'s network code, so transient 504s recover automatically within bounds. Output reports the path of each snapshot written and a short summary (release count, latest pydl tag).
+
 ### `pydl available`
 
-Crawl the GitHub releases API (through the cache) and print either an aggregate summary or an asset listing when any filter is set. This is the one command that reflects upstream reality beyond what this binary's embedded checksum set knows about — every invocation paginates the releases endpoint end-to-end. The disc cache short-circuits individual page fetches whose entries are still fresh, but the command's job is always to mirror upstream, never the embedded table.
+Read the PBS releases snapshot from `~/.pydl/snapshot/pbs-releases.json` and print either an aggregate summary or an asset listing when any filter is set. **No network.** If the snapshot is missing the command errors with `no PBS releases snapshot found at … — run \`pydl update\` to fetch one`. Every successful run also prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh.
 
 ```
 pydl available -t 20260414 -v 3.15.0a8
@@ -235,19 +258,22 @@ pydl cache clear --yes          # actually empty the cache
 
 ### `pydl self-update`
 
-Check the [`rcook/pydl` releases](https://github.com/rcook/pydl/releases) for a newer version of `pydl` itself and, if one is available, download the matching archive for the running platform, extract the binary and atomically replace the running executable. The compile-time target triple (set by `pydl/build.rs`) selects which release artifact to fetch — there is no `--target` flag.
+Replace the running binary with the latest released `pydl`. By default the version check is offline: the latest version comes from `~/.pydl/snapshot/pydl-latest.json`, written by `pydl update`. The actual binary download still goes over the network — there's no way around that. Pass `--online` to bypass the snapshot and check `api.github.com` directly. The compile-time target triple (set by `pydl/build.rs`) selects which release artifact to fetch — there is no `--target` flag.
 
 ```
-pydl self-update                       # no-op if already on the latest stable
-pydl self-update --pre                 # consider the newest pre-release too
-pydl self-update --force               # re-download and re-install the same version
-pydl self-update --force --dry-run     # report the asset URL without replacing
-pydl self-update --require-checksum    # refuse to update without a SHA256SUMS manifest
+pydl self-update                          # snapshot-driven; errors if no snapshot is present
+pydl self-update --online                 # bypass the snapshot, hit api.github.com directly
+pydl self-update --online --pre           # consider the newest pre-release too (requires --online)
+pydl self-update --force                  # re-download and re-install the same version
+pydl self-update --force --dry-run        # report the asset URL without replacing
+pydl self-update --require-checksum       # refuse to update without a SHA256SUMS manifest
 ```
 
 Behaviour:
 
-- **Stable-only by default.** Hits GitHub's `releases/latest` endpoint, which already excludes drafts and pre-releases. Pass `--pre` to enumerate recent releases (drafts excluded) and pick the entry with the highest semver, including pre-releases.
+- **Snapshot-driven by default.** Reads `pydl-latest.json` and prints the same staleness line as `pydl available` (`snapshot from N <units> ago`, with a refresh hint when older than 7 days). With no snapshot the command errors with `no pydl version snapshot found at … — run \`pydl update\`, or pass --online to check upstream directly`.
+- **`--online` is the escape hatch.** Hits GitHub's `releases/latest` endpoint exactly as the pre-snapshot implementation did. Useful when you want absolute-latest right now without rebuilding the snapshot.
+- **`--pre` requires `--online`.** The snapshot only carries the latest stable; the command errors out if `--pre` is set without `--online` and tells you to add it.
 - **No-op when already on the latest version.** Logs `pydl X.Y.Z is already the latest` and exits 0. `--force` overrides this so a corrupted install can be repaired by re-downloading.
 - **Refuses to downgrade silently.** If the running binary is newer than the latest published release, the command logs that fact and exits 0 without doing anything; `--force` is required to actually downgrade.
 - **SHA-256 verification.** Each release publishes a `SHA256SUMS` manifest alongside the platform archives (see `.github/workflows/release.yaml`). After downloading the archive `self-update` fetches the manifest and verifies the archive's hash before extracting. A hash mismatch — or a manifest that's present but doesn't list this archive — is a hard error and the running binary is never replaced. If the manifest is *absent* (older releases predate this), the command warns and proceeds; pass `--require-checksum` to make that a hard error too. The default will flip to strict in a future release once two consecutive manifest-publishing releases have shipped.
@@ -275,10 +301,11 @@ pydl completions powershell | Out-String | Invoke-Expression
 
 All subcommands share `$HOME/.pydl/` on Unix and `%USERPROFILE%\.pydl\` on Windows:
 
-- `cache/` — HTTP cache (populated by `pydl available` and `pydl download`; read by `pydl install` / `python`). See [`../pydl-cache/README.md`](../pydl-cache/README.md).
+- `snapshot/` — local copy of upstream release listings, written by `pydl update`; read by `pydl available` and `pydl self-update`. Two files: `pbs-releases.json` and `pydl-latest.json`.
+- `cache/` — HTTP cache (populated by `pydl update` and `pydl download`; read by `pydl install` / `python`). See [`../pydl-cache/README.md`](../pydl-cache/README.md).
 - `asset/<hash>/` — unpacked distributions.
 
-Both are safe to delete at any time. `pydl cache clear --yes` and `pydl uninstall --all --yes` do this through the CLI.
+All three are safe to delete at any time — `pydl update` rebuilds the snapshot, `pydl cache clear --yes` and `pydl uninstall --all --yes` do the corresponding cleanups through the CLI.
 
 ## Checksum embedding
 

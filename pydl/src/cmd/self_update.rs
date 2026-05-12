@@ -1,5 +1,11 @@
-//! `pydl self-update`: check GitHub releases for `rcook/pydl` and replace the
-//! running binary if a newer version is available.
+//! `pydl self-update`: replace the running binary with the latest released
+//! `pydl` version.
+//!
+//! By default this command is **offline for the version check**: it reads
+//! the latest version from the local snapshot written by `pydl update`. The
+//! actual binary download still happens over the network — there's no way
+//! around that. Pass `--online` to bypass the snapshot and hit
+//! `api.github.com` directly, matching the pre-refactor behaviour.
 //!
 //! Trust model: HTTPS to GitHub plus a `SHA256SUMS` manifest published in the
 //! same release. The downloaded archive is hashed and compared against the
@@ -14,11 +20,12 @@ use std::fs::{self, File};
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use futures_util::StreamExt;
 use log::{debug, info, warn};
 use pydl_cache::{CachingClient, Method, StatusCode};
+use pydl_common::snapshot::{self, PydlRelease, PydlReleaseAsset};
 use pydl_common::{cache_dir, checksums, min_freshness_secs};
 use semver::Version;
 use serde::Deserialize;
@@ -60,21 +67,50 @@ pub struct Args {
     /// shipped.
     #[arg(long)]
     pub require_checksum: bool,
+
+    /// Bypass the snapshot written by `pydl update` and check
+    /// `api.github.com` directly for the latest version. Required when
+    /// combined with `--pre` (the snapshot only carries the latest stable).
+    #[arg(long)]
+    pub online: bool,
 }
 
+// `Release` and `ReleaseAsset` are now type aliases over the
+// snapshot-defined shapes. `--online` paths still deserialize straight from
+// the GitHub API, but they go through `ApiRelease` (a private wire-shape
+// helper that strips drafts and lifts into `PydlRelease`).
+type Release = PydlRelease;
+type ReleaseAsset = PydlReleaseAsset;
+
 #[derive(Deserialize, Debug)]
-struct Release {
+struct ApiRelease {
     tag_name: String,
     #[serde(default)]
     draft: bool,
     #[serde(default)]
-    assets: Vec<ReleaseAsset>,
+    assets: Vec<ApiReleaseAsset>,
 }
 
 #[derive(Deserialize, Debug)]
-struct ReleaseAsset {
+struct ApiReleaseAsset {
     name: String,
     browser_download_url: String,
+}
+
+impl ApiRelease {
+    fn into_release(self) -> Release {
+        Release {
+            tag_name: self.tag_name,
+            assets: self
+                .assets
+                .into_iter()
+                .map(|a| ReleaseAsset {
+                    name: a.name,
+                    browser_download_url: a.browser_download_url,
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +119,10 @@ enum ArchiveKind {
     Zip,
 }
 
+// `run` orchestrates the entire self-update flow (version resolution,
+// download, checksum verify, extract, replace). Splitting it for the sake
+// of `too_many_lines` would obscure the linear flow.
+#[allow(clippy::too_many_lines)]
 pub async fn run(args: Args) -> Result<()> {
     let current_str = env!("CARGO_PKG_VERSION");
     let current = Version::parse(current_str)
@@ -90,14 +130,37 @@ pub async fn run(args: Args) -> Result<()> {
     // Set at compile time by `pydl/build.rs` (re-exporting cargo's TARGET).
     let target = env!("PYDL_BUILD_TARGET");
 
+    if args.pre && !args.online {
+        bail!(
+            "--pre requires --online: the snapshot from `pydl update` only \
+             carries the latest stable release. Pass --online to consider \
+             pre-releases."
+        );
+    }
+
     let user_agent = format!("{} (self-update)", crate::USER_AGENT);
     let client = CachingClient::with_user_agent(cache_dir()?, Some(user_agent.as_str()))?
         .with_min_freshness_secs(min_freshness_secs()?);
 
-    let release = if args.pre {
-        fetch_latest_including_pre(&client).await?
+    let release = if args.online {
+        if args.pre {
+            fetch_latest_including_pre(&client).await?
+        } else {
+            fetch_latest_stable(&client).await?
+        }
     } else {
-        fetch_latest_stable(&client).await?
+        let envelope = snapshot::read_pydl_latest()?.ok_or_else(|| {
+            let p = snapshot::pydl_latest_path().map_or_else(
+                |_| "<snapshot path unavailable>".to_owned(),
+                |p| p.display().to_string(),
+            );
+            anyhow!(
+                "no pydl version snapshot found at {p}. Run `pydl update`, or \
+                 pass --online to check upstream directly."
+            )
+        })?;
+        info!("{}", snapshot::staleness_report(envelope.fetched_at));
+        envelope.payload
     };
 
     let latest_str = release
@@ -195,12 +258,13 @@ async fn fetch_latest_stable(client: &CachingClient) -> Result<Release> {
             String::from_utf8_lossy(&body)
         );
     }
-    serde_json::from_slice(&body).map_err(|e| {
-        anyhow::anyhow!(
+    let api: ApiRelease = serde_json::from_slice(&body).map_err(|e| {
+        anyhow!(
             "parsing latest release JSON: {e} (body: {})",
             String::from_utf8_lossy(&body)
         )
-    })
+    })?;
+    Ok(api.into_release())
 }
 
 async fn fetch_latest_including_pre(client: &CachingClient) -> Result<Release> {
@@ -214,10 +278,10 @@ async fn fetch_latest_including_pre(client: &CachingClient) -> Result<Release> {
             String::from_utf8_lossy(&body)
         );
     }
-    let releases: Vec<Release> =
-        serde_json::from_slice(&body).map_err(|e| anyhow::anyhow!("parsing releases JSON: {e}"))?;
+    let releases: Vec<ApiRelease> =
+        serde_json::from_slice(&body).map_err(|e| anyhow!("parsing releases JSON: {e}"))?;
 
-    let mut best: Option<(Version, Release)> = None;
+    let mut best: Option<(Version, ApiRelease)> = None;
     for r in releases {
         if r.draft {
             continue;
@@ -233,7 +297,7 @@ async fn fetch_latest_including_pre(client: &CachingClient) -> Result<Release> {
             _ => {}
         }
     }
-    best.map(|(_, r)| r)
+    best.map(|(_, r)| r.into_release())
         .context("no usable releases found on GitHub (after filtering drafts and unparseable tags)")
 }
 
@@ -569,7 +633,6 @@ mod tests {
     fn fake_release(asset_names: &[&str]) -> Release {
         Release {
             tag_name: "v0.0.0".to_owned(),
-            draft: false,
             assets: asset_names
                 .iter()
                 .map(|n| ReleaseAsset {

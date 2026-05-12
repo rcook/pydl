@@ -194,7 +194,7 @@ fn unpack(archive_path: &Path, asset_name: &str, dest_dir: &Path) -> Result<()> 
         Compression::Gzip => unpack_tar(flate2::read::GzDecoder::new(reader), dest_dir),
         Compression::Zstd => {
             let zst = zstd::Decoder::new(reader).with_context(|| {
-                format!("initialising zstd decoder for {}", archive_path.display())
+                format!("initializing zstd decoder for {}", archive_path.display())
             })?;
             unpack_tar(zst, dest_dir)
         }

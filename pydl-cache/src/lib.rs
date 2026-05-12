@@ -173,7 +173,7 @@ impl CachingClient {
         Ok(body)
     }
 
-    /// Remove every on-disc artifact for `url`: meta, body, and any tmp body
+    /// Remove every on-disc artifact for `url`: meta, body and any tmp body
     /// left behind by an in-progress write.
     ///
     /// Idempotent: a URL that was never cached is a no-op. Use this when a

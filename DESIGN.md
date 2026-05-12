@@ -1,6 +1,6 @@
 # Design: how `pydl` verifies assets
 
-This document captures the trade-offs behind `pydl`'s current verification approach so future maintainers understand *why* the bake-at-build-time model was chosen over alternatives that might look simpler on paper. The short version: the current design optimises for tamper-resistance against a hostile network, trading that for a "stale set" maintenance cost whenever upstream cuts a new release.
+This document captures the trade-offs behind `pydl`'s current verification approach so future maintainers understand *why* the bake-at-build-time model was chosen over alternatives that might look simpler on paper. The short version: the current design optimizes for tamper-resistance against a hostile network, trading that for a "stale set" maintenance cost whenever upstream cuts a new release.
 
 ## Current design: baked-in checksums
 
@@ -40,7 +40,7 @@ Keep `./checksums/` in the repo, but commit one small file: a manifest listing e
 
 - **Pros:** binary footprint is much smaller (64 hex bytes × N releases vs. full `SHA256SUMS` bodies); still offline after first fetch (the per-tag `SHA256SUMS` gets cached in `~/.pydl/cache/`); same review surface as today.
 - **Cons:** still has the stale-set problem — every upstream release still needs a PR to add a manifest entry. Effectively the same workflow as today with an extra indirection step; doesn't solve the core complaint.
-- **Verdict:** a size optimisation over the current design, not a semantic improvement. Not worth the complexity unless binary bloat becomes acute.
+- **Verdict:** a size optimization over the current design, not a semantic improvement. Not worth the complexity unless binary bloat becomes acute.
 
 ### C. Maintain a signed `checksums.json` as a separate artefact
 
@@ -68,4 +68,16 @@ Skip the checksum step entirely. Use HTTPS fetching (with certificate pinning if
 
 ## Where the current design sits
 
-The bake-at-build-time approach buys strong tamper-resistance and pays for it with maintenance cost (`get-checksums` must be run periodically) and binary size (growing ~21 KB per upstream release). The standalone [`check-checksums`](./check-checksums/README.md) binary, run in CI, closes the weakest link in the "commits get reviewed" argument by turning it into bit-exact agreement with upstream, verified on every PR and nightly. If upstream's signing practices stabilise in a form `pydl` can consume, **alternative A** is the cleanest upgrade path; until then, the current design is the honest choice for the threat model.
+The bake-at-build-time approach buys strong tamper-resistance and pays for it with maintenance cost (`get-checksums` must be run periodically) and binary size (growing ~21 KB per upstream release). The standalone [`check-checksums`](./check-checksums/README.md) binary, run in CI, closes the weakest link in the "commits get reviewed" argument by turning it into bit-exact agreement with upstream, verified on every PR and nightly. If upstream's signing practices stabilize in a form `pydl` can consume, **alternative A** is the cleanest upgrade path; until then, the current design is the honest choice for the threat model.
+
+## Note on the `pydl update` snapshot
+
+`pydl update` writes a local snapshot of the upstream releases list (and the latest `pydl` version) under `~/.pydl/snapshot/`. **The snapshot is not part of the trust model.** It is purely a UX optimization that pushes the network-availability problem out of every `pydl available` / `pydl self-update` invocation and into a single explicit command.
+
+Specifically:
+
+- `pydl install` continues to resolve `(tag, asset)` against the **embedded checksum set**, not the snapshot. A snapshot containing arbitrary tags doesn't unlock arbitrary installs.
+- `pydl download` continues to verify every asset's bytes against the embedded SHA-256, regardless of whether the asset URL came from a snapshot or anywhere else.
+- `pydl self-update` continues to verify the downloaded binary against the release's `SHA256SUMS` manifest before self-replacing. The snapshot only carries the asset URLs and tag name — never a hash that bypasses the manifest.
+
+A tampered snapshot can therefore at worst hide releases or fabricate a "newer" pydl version, but it cannot trick `pydl` into installing bytes that don't match a checksum the binary or the upstream manifest already vouches for.

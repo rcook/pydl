@@ -8,3 +8,4 @@ pub mod pin;
 pub mod python;
 pub mod self_update;
 pub mod uninstall;
+pub mod update;

@@ -127,7 +127,7 @@ impl From<&FilterArgs> for FilterConfig {
 }
 
 /// A GitHub release as returned by the REST API, reduced to the fields we use.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub tag_name: String,
     pub name: Option<String>,
@@ -139,7 +139,7 @@ pub struct Release {
 }
 
 /// One asset attached to a release.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Asset {
     pub name: String,
     pub size: u64,

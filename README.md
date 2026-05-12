@@ -5,7 +5,9 @@
 Pick a tag and version, download it once, use it forever:
 
 ```sh
-pydl download -t 20260414 -v 3.14.4                # one-time network hit
+pydl update                                        # one-time refresh of the local snapshot
+pydl available -v 3.14.4                           # offline: read from the snapshot
+pydl download -t 20260414 -v 3.14.4                # one-time network hit for the asset
 pydl python   -t 20260414 -v 3.14.4 -- -m venv .venv
 . ./.venv/bin/activate
 ```
@@ -14,8 +16,12 @@ pydl python   -t 20260414 -v 3.14.4 -- -m venv .venv
 
 - **No system Python required.** Downloads self-contained distributions that run without package-manager coordination. Useful for CI images, air-gapped machines or just avoiding conflicts with your OS Python.
 - **Reproducible.** Every asset is verified against a SHA-256 baked into the `pydl` binary at build time. Checksums are committed alongside the code, so two people running the same `pydl` on the same `(tag, version)` get bit-identical bytes.
-- **Predictable network usage.** Only two subcommands (`available`, `download`) ever touch the network. Everything else — `install`, `python`, `pin`, `uninstall`, `installed`, `cache`, `completions` — is guaranteed offline and fast.
+- **Predictable network usage.** Only `pydl update` and `pydl download` (plus `pydl self-update --online` as an explicit escape hatch) touch the network. Everything else — `available`, `install`, `python`, `pin`, `uninstall`, `installed`, `cache`, `completions` and the default `self-update` — is guaranteed offline and fast.
 - **Project-pinned builds.** `pydl pin` writes a `.pydl.json` file you can commit; teammates who run `pydl python -- …` in the repo pick up the same Python build automatically.
+
+### The `update` model
+
+`pydl update` is the single command that fetches the upstream releases list and the latest pydl version, writing both to `~/.pydl/snapshot/`. `pydl available` and `pydl self-update` read from that snapshot — they never contact `api.github.com`. If no snapshot is present, those commands error with a hint to run `pydl update` first; if the snapshot is older than 7 days they additionally suggest a refresh. Pass `--online` to `pydl self-update` for a one-off bypass that hits the network directly.
 
 ## Install
 
@@ -69,31 +75,33 @@ cd pydl
 
 ## Usage
 
-See [`pydl/README.md`](./pydl/README.md) for the full user guide — subcommands, filter flags, the `.pydl.json` pin file, and every supported workflow.
+See [`pydl/README.md`](./pydl/README.md) for the full user guide — subcommands, filter flags, the `.pydl.json` pin file and every supported workflow.
 
 Quick orientation:
 
-| Command               | Network? | What it does                                                    |
-|-----------------------|----------|-----------------------------------------------------------------|
-| `pydl available`      | yes      | Show releases available upstream.                               |
-| `pydl download`       | yes      | Fetch one asset into `~/.pydl/cache/`.                          |
-| `pydl install`        | no       | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>`. |
-| `pydl installed`      | no       | List what's installed locally.                                  |
-| `pydl uninstall`      | no       | Remove an installed asset.                                      |
-| `pydl python -- …`    | no       | Run a previously-installed interpreter.                         |
-| `pydl pin`            | no       | Freeze tag/version into `.pydl.json` for the project.           |
-| `pydl cache`          | no       | Inspect or clear the HTTP cache.                                |
-| `pydl completions`    | no       | Emit a shell-completion script.                                 |
-| `pydl self-update`    | yes      | Replace the running binary with the latest GitHub release.      |
+| Command               | Network?       | What it does                                                                                        |
+|-----------------------|----------------|-----------------------------------------------------------------------------------------------------|
+| `pydl update`         | yes            | Refresh `~/.pydl/snapshot/` (PBS releases list + latest pydl version). The only listings hit.       |
+| `pydl available`      | no             | Show releases from the local snapshot.                                                              |
+| `pydl download`       | yes            | Fetch one asset into `~/.pydl/cache/`.                                                              |
+| `pydl install`        | no             | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>`.                                     |
+| `pydl installed`      | no             | List what's installed locally.                                                                      |
+| `pydl uninstall`      | no             | Remove an installed asset.                                                                          |
+| `pydl python -- …`    | no             | Run a previously-installed interpreter.                                                             |
+| `pydl pin`            | no             | Freeze tag/version into `.pydl.json` for the project.                                               |
+| `pydl cache`          | no             | Inspect or clear the HTTP cache.                                                                    |
+| `pydl completions`    | no             | Emit a shell-completion script.                                                                     |
+| `pydl self-update`    | only with `--online` (or always for the binary download) | Replace the running binary with the latest GitHub release. Reads the version from the snapshot by default; `--online` bypasses it. |
 
 ## State
 
 Everything `pydl` writes lives under `~/.pydl/` (Unix) or `%USERPROFILE%\.pydl\` (Windows):
 
+- `snapshot/` — JSON snapshots written by `pydl update` (`pbs-releases.json`, `pydl-latest.json`).
 - `cache/` — HTTP-cache bodies for downloaded assets.
 - `asset/<hash>/` — unpacked Python distributions.
 
-Both are safe to delete; the next `pydl download` / `pydl install` will re-populate what you need. `pydl cache clear --yes` and `pydl uninstall --all --yes` do this through the CLI.
+All three are safe to delete; the next `pydl update` rebuilds the snapshot, and the next `pydl download` / `pydl install` rebuilds the cache and asset directory. `pydl cache clear --yes` and `pydl uninstall --all --yes` do the corresponding cleanups through the CLI.
 
 ## See also
 
