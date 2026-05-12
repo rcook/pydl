@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.11] - 2026-05-12
+
+
+### Internal
+- Require checksum when updating pydl (d5e1550)
+- Incorporate latest SHA-256 checksums (6c7a3c1)
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.10 (da9d1f0)
+
 ## [0.1.10] - 2026-05-12
 
 
