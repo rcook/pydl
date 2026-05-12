@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.9] - 2026-05-12
+
+
+### Tooling
+- Update CHANGELOG.md for v0.1.8 (44070f6)
+- Update descriptions (82bae54)
+
 ## [0.1.8] - 2026-05-12
 
 
