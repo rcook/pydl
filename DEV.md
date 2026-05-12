@@ -24,7 +24,8 @@ README.md             user-facing entry point
 DEV.md                this file
 DESIGN.md             design rationale for the checksum-verification model
 MAINTENANCE.md        recurring maintenance prompts
-TODO.md               maintainer backlog
+TODO.md               maintainer backlog (small, dated items)
+ISSUES.md             rolling triage of bugs, smells and resolved investigations
 dev.sh                developer entry point (see below)
 checksums/            committed <tag>.sha256sums files, embedded at build time
 pydl/                 the user-facing binary
@@ -118,6 +119,8 @@ A thin wrapper over the usual `cargo` invocations. Run `./dev.sh help` for the c
 1. Edit code.
 2. `./dev.sh fmt` — format in place.
 3. `./dev.sh check` — the gate. If this is clean, your change is ready for review.
+
+[`ISSUES.md`](./ISSUES.md) tracks open bugs, smells and resolved investigations across the workspace. Skim it before starting a non-trivial change so you know whether the area you're touching has known caveats; add a new entry there (rather than fixing on the side) if you spot a problem outside your immediate task.
 
 Tighter iteration:
 

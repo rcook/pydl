@@ -4,4 +4,5 @@
 * Ensure README.md and DEV.md are up to date
 * Ensure README.md is user-focused and DEV.md is developer-focused
 * Suggest refinements to README.md and DEV.md
+* Skim [`ISSUES.md`](./ISSUES.md) before starting a non-trivial change; add findings there as you go rather than only fixing on the side
 * When cutting a release: bump `[workspace.package].version` in `Cargo.toml`, run `cargo update --workspace`, commit, then push tag `v<X.Y.Z>` — the release and changelog workflows fire on the tag
