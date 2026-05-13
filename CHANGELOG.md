@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.12] - 2026-05-13
+
+
+### Internal
+- Clean up CHANGELOG.md (b886a2a)
+- Prettify output of 'pydl available' (61fba5e)
+
 ## [0.1.11] - 2026-05-12
 
 
@@ -94,7 +101,7 @@ Generated from git commits by [git-cliff](https://git-cliff.org).
 - Installation instructions (aeb548c)
 - Report more version information (887bef0)
 
-## [0.1.3] - 2026-05-11
+## [0.1.2] - 2026-05-11
 
 
 ### Internal
