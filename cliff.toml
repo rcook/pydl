@@ -37,6 +37,13 @@ commit_parsers = [
     { message = "^Bump version", skip = true },
     # Skip merge commits.
     { message = "^Merge ", skip = true },
+    # Skip automated changelog commits.
+    { message = "^Update CHANGELOG", skip = true },
+    # Skip any commit that opts out with [skip changelog].
+    { message = ".*\\[skip changelog\\].*", skip = true },
+    # Skip pure formatting / bookkeeping commits.
+    { message = "^Reformat code$", skip = true },
+    { message = "^Dummy ", skip = true },
 
     { message = "^Bump ", group = "Dependencies" },
     # Tooling/CI signals matched before generic Add/Fix so e.g. "Add permissions to workflow" lands in Tooling.

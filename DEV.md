@@ -226,6 +226,10 @@ To reproduce the gate locally:
 
 This runs `fmt-check` + `clippy` + `test` on the host platform. The full multi-OS matrix only runs in CI.
 
+### Excluding a commit from the changelog
+
+Append `[skip changelog]` anywhere in the commit message subject line and `git-cliff` will omit it from `CHANGELOG.md`. The rule lives in `cliff.toml` alongside the other skip patterns. The changelog workflow already tags its own automated commit this way, so it never appears in the generated output.
+
 ### Cutting a release
 
 The shared workspace version lives in `[workspace.package]` of the root `Cargo.toml`. To cut a release:
