@@ -4,7 +4,7 @@ Download, verify, install and run the standalone Python distributions published 
 
 ```
 pydl update
-pydl available        [--python | --pydl] [filter flags]
+pydl available        [--summary | --pydl] [filter flags]
 pydl download         [filter flags] [-o DIR]
 pydl install          [filter flags]
 pydl installed        [filter flags]
@@ -21,7 +21,7 @@ pydl self-update      [--online] [--pre] [--force] [--dry-run] [--allow-missing-
 | Subcommand            | Network?           | What it does                                                                                |
 |-----------------------|--------------------|---------------------------------------------------------------------------------------------|
 | `pydl update`         | yes                | Refresh `~/.pydl/snapshot/`: Python releases list + latest pydl version. The only command that fetches release listings. |
-| `pydl available`      | no                 | Read the snapshot and show what's available — both Python releases and the latest pydl version. `--python` / `--pydl` scope to one section. |
+| `pydl available`      | no                 | Read the snapshot and show what's available — per-asset detail with local status indicators. `--summary` for a compact overview, `--pydl` for just the pydl version line. |
 | `pydl download`       | yes                | Fetch one asset into `~/.pydl/cache/` (and optionally `-o DIR`).                            |
 | `pydl install`        | no                 | Verify + unpack a downloaded asset into `~/.pydl/asset/<hash>/`.                            |
 | `pydl installed`      | no                 | List installed assets and their paths.                                                      |
@@ -141,32 +141,46 @@ Both writes go through the same retry-with-backoff stack as the rest of `pydl`'s
 
 ### `pydl available`
 
-Read the local snapshot at `~/.pydl/snapshot/` and report what's available — both Python releases and the latest pydl version. **No network.** Every successful run prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh. If a required snapshot is missing the command errors with `no … snapshot found at … — run \`pydl update\` to fetch one`.
+Read the local snapshot at `~/.pydl/snapshot/` and report what's available. **No network.** Every successful run prints the snapshot's age (`snapshot from 3 hours ago`) and, if older than 7 days, suggests a refresh. If a required snapshot is missing the command errors with `no … snapshot found at … — run \`pydl update\` to fetch one`.
 
-Default invocation (no flags) prints three lines:
+The default invocation shows a per-asset listing with status indicators. Output is coloured when stdout is a terminal; set `NO_COLOR=1` to suppress colour.
 
 ```
 $ pydl available
 snapshot from 3 hours ago
-pydl: latest v0.1.7 (you are up to date)
-Python releases: 113 (latest tag 20260512, 2 days ago upstream)
+pydl: latest v0.1.11 (you are up to date)
+20260512:
+  cpython-3.14.4+20260512-aarch64-apple-darwin-install_only.tar.gz (26.4 MiB) [installed]
+  cpython-3.15.0a8+20260512-aarch64-apple-darwin-install_only.tar.gz (26.8 MiB) [cached]
+20260414:
+  cpython-3.14.4+20260414-aarch64-apple-darwin-install_only.tar.gz (26.3 MiB) [checksum unavailable]
+  cpython-3.14.4+20260414-aarch64-apple-darwin-pgo+lto-full.tar.gz (59.1 MiB)
 ```
+
+Status markers:
+
+| Marker                   | Meaning                                                                                           |
+|--------------------------|---------------------------------------------------------------------------------------------------|
+| `[installed]`            | Unpacked under `~/.pydl/asset/`. Ready to use via `pydl python`.                                  |
+| `[cached]`               | Downloaded into `~/.pydl/cache/` but not yet installed. Run `pydl install` to unpack.             |
+| `[checksum unavailable]` | Listed in the snapshot but this build of pydl lacks the embedded SHA-256. Run `pydl self-update` to install a newer version that may include it. |
+| *(none)*                 | Available with a valid checksum. Run `pydl download` then `pydl install`.                         |
 
 Flags:
 
 | Flag                | Effect                                                                                            |
 |---------------------|---------------------------------------------------------------------------------------------------|
-| `--python`          | Show only the Python releases section. Default behaviour switches from the one-line summary to the full detailed listing. |
-| `--pydl`            | Show only the latest-pydl-version line. Suppresses the Python section entirely. Mutually exclusive with `--python` and with any filter flag. |
-| `-t`, `-v`, `--platform`, `--no-platform`, `--default-attrs`, `--no-default-attrs` | Filter flags; implicitly select `--python` and switch to a per-asset listing. |
+| `--summary`         | Show a compact one-line overview instead of the per-asset listing.                                |
+| `--pydl`            | Show only the latest-pydl-version line. Suppresses the Python section entirely. Mutually exclusive with `--summary` and with any filter flag. |
+| `-t`, `-v`, `--platform`, `--no-platform`, `--default-attrs`, `--no-default-attrs` | Filter flags; narrow the per-asset listing. |
 
 Examples:
 
 ```
-pydl available                              # both sections (short)
-pydl available --python                     # full Python listing, no pydl line
+pydl available                              # per-asset listing with status indicators
+pydl available --summary                    # compact one-line summary
 pydl available --pydl                       # one-line pydl version status
-pydl available -t 20260414 -v 3.15.0a8      # filtered Python listing
+pydl available -t 20260414 -v 3.15.0a8      # filtered listing
 ```
 
 ### `pydl download`

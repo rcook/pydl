@@ -1,9 +1,15 @@
+use std::cmp::Ordering;
+use std::path::Path;
+
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use log::{info, warn};
+use log::warn;
+use owo_colors::Stream::Stdout;
+use owo_colors::{OwoColorize, Style};
+use pydl_cache::CachingClient;
 use pydl_common::asset::asset_sort_key;
 use pydl_common::filter::{Asset, FilterArgs, Release, filter_releases};
-use pydl_common::snapshot;
+use pydl_common::{OWNER, REPO, cache_dir, checksums, install, snapshot};
 use semver::Version;
 
 #[derive(Parser, Debug)]
@@ -11,19 +17,17 @@ pub struct Args {
     #[command(flatten)]
     pub filter: FilterArgs,
 
-    /// Show only the Python releases section. Implied when any filter flag
-    /// (`-t`, `-v`, `--platform`, `--default-attrs`) is set. Mutually
-    /// exclusive with `--pydl`.
+    /// Show a compact one-line overview instead of the per-asset listing.
     #[arg(long, conflicts_with = "pydl")]
-    pub python: bool,
+    pub summary: bool,
 
     /// Show only the latest-pydl-version line. Mutually exclusive with
-    /// `--python` and with any filter flag (the filter flags only narrow
+    /// `--summary` and with any filter flag (the filter flags only narrow
     /// the Python section, which `--pydl` suppresses).
     #[arg(
         long,
         conflicts_with_all = [
-            "python", "tag", "version",
+            "summary", "tag", "version",
             "platform", "no_platform",
             "default_attrs", "no_default_attrs",
         ],
@@ -31,88 +35,124 @@ pub struct Args {
     pub pydl: bool,
 }
 
-fn print_summary(all_releases: &[Release]) {
-    let total = all_releases.len();
-    let drafts = all_releases.iter().filter(|r| r.draft).count();
-    let prereleases = all_releases.iter().filter(|r| r.prerelease).count();
-    let total_assets: usize = all_releases.iter().map(|r| r.assets.len()).sum();
-    let total_asset_bytes: u64 = all_releases
-        .iter()
-        .flat_map(|r| r.assets.iter().map(|a| a.size))
-        .sum();
-
-    info!("snapshot has {total} release(s)");
-    info!("  drafts: {drafts}, prereleases: {prereleases}");
-    info!("  assets: {total_assets}, total size: {total_asset_bytes} bytes");
-
-    if let Some(latest) = all_releases.first() {
-        info!(
-            "most recent release: tag={}, name={:?}, published_at={:?}, assets={}",
-            latest.tag_name,
-            latest.name,
-            latest.published_at,
-            latest.assets.len()
-        );
-        // Sort so the "first 5" is deterministic across runs regardless of the
-        // order GitHub returned assets in.
-        let mut sorted: Vec<&Asset> = latest.assets.iter().collect();
-        sorted.sort_by_cached_key(|a| asset_sort_key(&a.name));
-        for asset in sorted.iter().take(5) {
-            info!("  asset: {} ({} bytes)", asset.name, asset.size);
-        }
-        if sorted.len() > 5 {
-            info!("  ...and {} more", sorted.len() - 5);
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssetStatus {
+    Installed,
+    Cached,
+    NoChecksum,
+    Available,
 }
 
-fn print_filtered(groups: &[(&Release, Vec<&Asset>)]) {
-    if groups.is_empty() {
-        info!("(no assets matched the filter)");
-        return;
-    }
-    for (release, assets) in groups {
-        info!(
-            "release: tag={}, name={:?}, published_at={:?}, draft={}, prerelease={}, assets={}",
-            release.tag_name,
-            release.name,
-            release.published_at,
-            release.draft,
-            release.prerelease,
-            assets.len()
-        );
-        let mut sorted: Vec<&Asset> = assets.clone();
-        sorted.sort_by_cached_key(|a| asset_sort_key(&a.name));
-        for asset in sorted {
-            info!("  asset: {} ({} bytes)", asset.name, asset.size);
+fn asset_status(
+    tag: &str,
+    asset_name: &str,
+    client: Option<&CachingClient>,
+    install_root: Option<&Path>,
+) -> AssetStatus {
+    if let Some(root) = install_root {
+        let hash = install::asset_hash(asset_name);
+        if root.join(&hash).exists() {
+            return AssetStatus::Installed;
         }
     }
+
+    if checksums::expected_hash(tag, asset_name).is_err() {
+        return AssetStatus::NoChecksum;
+    }
+
+    if let Some(c) = client {
+        let url = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}");
+        if c.cached_body_path(&url).ok().flatten().is_some() {
+            return AssetStatus::Cached;
+        }
+    }
+
+    AssetStatus::Available
+}
+
+fn print_detailed(
+    groups: &[(&Release, Vec<&Asset>)],
+    client: Option<&CachingClient>,
+    install_root: Option<&Path>,
+) -> bool {
+    if groups.is_empty() {
+        println!("(no assets matched the filter)");
+        return false;
+    }
+    let mut saw_no_checksum = false;
+    for (release, assets) in groups {
+        let tag_header = format!("{}:", release.tag_name);
+        let tag_style = Style::new().bold().blue();
+        println!(
+            "{}",
+            tag_header.if_supports_color(Stdout, |t| t.style(tag_style))
+        );
+        let mut sorted: Vec<&Asset> = assets
+            .iter()
+            .filter(|a| !a.name.ends_with(".sha256"))
+            .copied()
+            .collect();
+        sorted.sort_by_cached_key(|a| asset_sort_key(&a.name));
+        for asset in sorted {
+            let status = asset_status(&release.tag_name, &asset.name, client, install_root);
+            if status == AssetStatus::NoChecksum {
+                saw_no_checksum = true;
+            }
+            let size = humanize_bytes(asset.size);
+            let size_str = format!("({size})");
+            let dim_size = size_str.if_supports_color(Stdout, |t| t.dimmed());
+            match status {
+                AssetStatus::Installed => {
+                    let marker = "[installed]".if_supports_color(Stdout, |t| t.green());
+                    println!("  {} {dim_size} {marker}", asset.name);
+                }
+                AssetStatus::Cached => {
+                    let marker = "[cached]".if_supports_color(Stdout, |t| t.cyan());
+                    println!("  {} {dim_size} {marker}", asset.name);
+                }
+                AssetStatus::NoChecksum => {
+                    let marker = "[checksum unavailable]".if_supports_color(Stdout, |t| t.yellow());
+                    println!("  {} {dim_size} {marker}", asset.name);
+                }
+                AssetStatus::Available => {
+                    println!("  {} {dim_size}", asset.name);
+                }
+            }
+        }
+    }
+    saw_no_checksum
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn humanize_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let kib = bytes as f64 / 1024.0;
+    if kib < 1024.0 {
+        return format!("{kib:.1} KiB");
+    }
+    let mib = kib / 1024.0;
+    if mib < 1024.0 {
+        return format!("{mib:.1} MiB");
+    }
+    let gib = mib / 1024.0;
+    format!("{gib:.1} GiB")
 }
 
 // `args` by value matches the dispatch shape of every other subcommand.
 #[allow(clippy::needless_pass_by_value)]
 pub fn run(args: Args) -> Result<()> {
     let resolved = args.filter.resolve();
-    // `any_explicit_filter` is true only if the user passed at least one
-    // filter flag on the command line. We can't use
-    // `FilterArgs::any_asset_filter` here because that returns true on a
-    // bare `pydl available` invocation (the default `--platform` filter is
-    // already on). For routing the new `--pydl` / `--python` semantics we
-    // need to know what the user *typed*, not what defaults resolve to.
     let any_explicit_filter = args.filter.tag.is_some()
         || args.filter.version.is_some()
         || args.filter.platform
         || args.filter.no_platform
         || args.filter.default_attrs
         || args.filter.no_default_attrs;
-    // `--python` is implied (rather than required) when an explicit filter
-    // is set — filters only ever narrow the Python section.
     let show_python = !args.pydl;
-    let show_pydl = !args.python && !any_explicit_filter;
+    let show_pydl = !args.summary && !any_explicit_filter;
 
-    // Read whichever snapshots we'll actually need. A missing required
-    // snapshot is the only fatal case; an unrelated missing snapshot is
-    // silently skipped.
     let pbs_env = if show_python {
         Some(snapshot::read_pbs_releases()?.ok_or_else(|| {
             let p = snapshot::pbs_releases_path().map_or_else(
@@ -136,9 +176,6 @@ pub fn run(args: Args) -> Result<()> {
         None
     };
 
-    // Print the staleness line once. Prefer the older snapshot's age when
-    // both are available — conservative: a refresh-suggestion fires as
-    // soon as either half is stale.
     let staleness_basis = match (&pbs_env, &pydl_env) {
         (Some(p), Some(d)) => Some(p.fetched_at.min(d.fetched_at)),
         (Some(p), None) => Some(p.fetched_at),
@@ -146,7 +183,10 @@ pub fn run(args: Args) -> Result<()> {
         (None, None) => None,
     };
     if let Some(fetched_at) = staleness_basis {
-        info!("{}", snapshot::staleness_report(fetched_at));
+        println!(
+            "{}",
+            snapshot::staleness_report(fetched_at).if_supports_color(Stdout, |t| t.dimmed())
+        );
     }
 
     if let Some(env) = pydl_env {
@@ -155,29 +195,30 @@ pub fn run(args: Args) -> Result<()> {
 
     if let Some(env) = pbs_env {
         let releases = &env.payload;
-        if any_explicit_filter {
-            // Filters always run through the resolved (post-default) filter
-            // set, including the implicit platform filter.
-            let groups = filter_releases(releases, resolved)?;
-            print_filtered(&groups);
-        } else if args.python {
-            // Explicit `--python` with no filter: full detailed listing.
-            print_summary(releases);
-        } else {
-            // Default mode (no filter, no scope flag): one-line summary so
-            // both sections fit on three lines.
-            info!(
+        if args.summary && !any_explicit_filter {
+            println!(
                 "{}",
                 snapshot::format_python_releases_short_summary(releases)
             );
+            println!("(pass -t/-v to filter or omit --summary for per-asset detail)");
+        } else {
+            let groups = filter_releases(releases, resolved)?;
+            let client = cache_dir().ok().and_then(|d| CachingClient::new(d).ok());
+            let install_root = install::install_root().ok();
+            let saw_no_checksum = print_detailed(&groups, client.as_ref(), install_root.as_deref());
+            if saw_no_checksum {
+                println!();
+                let note = "note: some assets are marked [checksum unavailable] because this \
+                            build of pydl\ndoes not include checksums for their release. \
+                            Run `pydl self-update` to install a newer\nversion that may include them.";
+                println!("{}", note.if_supports_color(Stdout, |t| t.yellow()));
+            }
         }
     }
 
     Ok(())
 }
 
-/// Print the one-line pydl version summary. A non-semver running version
-/// or latest tag downgrades to a `warn!` and skips the line — never fatal.
 fn emit_pydl_line(release: &pydl_common::snapshot::PydlRelease) {
     let running_str = env!("CARGO_PKG_VERSION");
     let Ok(running) = Version::parse(running_str)
@@ -202,5 +243,62 @@ fn emit_pydl_line(release: &pydl_common::snapshot::PydlRelease) {
         );
         return;
     };
-    info!("{}", snapshot::format_pydl_version_line(&running, &latest));
+    let line = snapshot::format_pydl_version_line(&running, &latest);
+    match running.cmp(&latest) {
+        Ordering::Less => {
+            println!("{}", line.if_supports_color(Stdout, |t| t.yellow()));
+        }
+        _ => {
+            println!("{}", line.if_supports_color(Stdout, |t| t.green()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn humanize_bytes_small() {
+        assert_eq!(humanize_bytes(0), "0 B");
+        assert_eq!(humanize_bytes(512), "512 B");
+        assert_eq!(humanize_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn humanize_bytes_kib() {
+        assert_eq!(humanize_bytes(1024), "1.0 KiB");
+        assert_eq!(humanize_bytes(1536), "1.5 KiB");
+    }
+
+    #[test]
+    fn humanize_bytes_mib() {
+        assert_eq!(humanize_bytes(1024 * 1024), "1.0 MiB");
+        assert_eq!(humanize_bytes(26_843_546), "25.6 MiB");
+    }
+
+    #[test]
+    fn humanize_bytes_gib() {
+        assert_eq!(humanize_bytes(1024 * 1024 * 1024), "1.0 GiB");
+    }
+
+    #[test]
+    fn asset_status_no_checksum() {
+        let status = asset_status("nonexistent_tag", "fake_asset.tar.gz", None, None);
+        assert_eq!(status, AssetStatus::NoChecksum);
+    }
+
+    #[test]
+    fn asset_status_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hash = install::asset_hash("fake_asset.tar.gz");
+        std::fs::create_dir(tmp.path().join(&hash)).unwrap();
+        let status = asset_status(
+            "nonexistent_tag",
+            "fake_asset.tar.gz",
+            None,
+            Some(tmp.path()),
+        );
+        assert_eq!(status, AssetStatus::Installed);
+    }
 }
