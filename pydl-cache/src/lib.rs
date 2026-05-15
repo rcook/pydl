@@ -22,6 +22,14 @@ use url::Url;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheOutcome {
+    Hit,
+    Revalidated,
+    Downloaded,
+    StaleIfError,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct EntryMeta {
     status: u16,
@@ -194,7 +202,7 @@ impl CachingClient {
         Ok(())
     }
 
-    pub async fn get_stream(&self, url: &str) -> Result<(StatusCode, ByteStream)> {
+    pub async fn get_stream(&self, url: &str) -> Result<(StatusCode, CacheOutcome, ByteStream)> {
         let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
         let canonical = Self::canonical_url(&parsed);
         let existing = self.load_entry(&canonical)?;
@@ -219,7 +227,7 @@ impl CachingClient {
                     "GET {url} -> HIT (status {status}, fresh for {ttl_remaining}s, body {})",
                     paths.body.display()
                 );
-                return Ok((status, open_stream(&paths.body).await?));
+                return Ok((status, CacheOutcome::Hit, open_stream(&paths.body).await?));
             }
         }
 
@@ -267,40 +275,66 @@ impl CachingClient {
                 "GET {url} -> HIT (304 Not Modified, revalidated, body {})",
                 paths.body.display()
             );
-            return Ok((status, open_stream(&paths.body).await?));
+            return Ok((
+                status,
+                CacheOutcome::Revalidated,
+                open_stream(&paths.body).await?,
+            ));
         }
 
         let status = resp.status();
         let headers = resp.headers().clone();
 
         if !status.is_success() {
-            if let Some(msg) = rate_limit_message(status, &headers, now) {
-                info!("GET {url} -> {msg}");
-            }
-            if is_stale_if_error(status)
-                && let Some((existing_paths, existing_meta)) = existing
-            {
-                warn!(
-                    "GET {url} -> upstream returned {status}, serving stale entry (stale-if-error, body {})",
-                    existing_paths.body.display()
-                );
-                let cached_status = StatusCode::from_u16(existing_meta.status)?;
-                return Ok((cached_status, open_stream(&existing_paths.body).await?));
-            }
-            if existing.is_some() {
-                warn!("GET {url} -> upstream returned {status}, not updating cache");
-            }
-            return Ok((status, passthrough_stream(resp)));
+            return self
+                .handle_upstream_error(url, status, &headers, now, existing, resp)
+                .await;
         }
 
         if parse_cache_control(&headers).no_store {
-            return Ok((status, passthrough_stream(resp)));
+            return Ok((status, CacheOutcome::Downloaded, passthrough_stream(resp)));
         }
 
         download_to_tmp(&paths, resp).await?;
         let meta = build_meta(status, &headers, now);
         Self::write_meta(&paths.meta, &meta)?;
-        Ok((status, open_stream(&paths.body).await?))
+        Ok((
+            status,
+            CacheOutcome::Downloaded,
+            open_stream(&paths.body).await?,
+        ))
+    }
+
+    async fn handle_upstream_error(
+        &self,
+        url: &str,
+        status: StatusCode,
+        headers: &HeaderMap,
+        now: u64,
+        existing: Option<(EntryPaths, EntryMeta)>,
+        resp: Response,
+    ) -> Result<(StatusCode, CacheOutcome, ByteStream)> {
+        if let Some(msg) = rate_limit_message(status, headers, now) {
+            info!("GET {url} -> {msg}");
+        }
+        if is_stale_if_error(status)
+            && let Some((existing_paths, existing_meta)) = existing
+        {
+            warn!(
+                "GET {url} -> upstream returned {status}, serving stale entry (stale-if-error, body {})",
+                existing_paths.body.display()
+            );
+            let cached_status = StatusCode::from_u16(existing_meta.status)?;
+            return Ok((
+                cached_status,
+                CacheOutcome::StaleIfError,
+                open_stream(&existing_paths.body).await?,
+            ));
+        }
+        if existing.is_some() {
+            warn!("GET {url} -> upstream returned {status}, not updating cache");
+        }
+        Ok((status, CacheOutcome::Downloaded, passthrough_stream(resp)))
     }
 
     pub async fn request(&self, method: Method, url: &str) -> Result<(StatusCode, Vec<u8>)> {
@@ -313,7 +347,7 @@ impl CachingClient {
             return Ok((status, body));
         }
 
-        let (status, stream) = self.get_stream(url).await?;
+        let (status, _outcome, stream) = self.get_stream(url).await?;
         let body = collect_stream(stream).await?;
         Ok((status, body))
     }
@@ -1231,8 +1265,9 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, stream) = client.get_stream(&url).await.unwrap();
+        let (status, outcome, stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
+        assert_eq!(outcome, CacheOutcome::Downloaded);
         let collected = collect_stream(stream).await.unwrap();
         assert_eq!(collected, b"hello tarball");
 
@@ -1243,7 +1278,8 @@ mod tests {
         assert!(!paths.tmp_body().exists());
         assert_eq!(fs::read(&paths.body).unwrap(), b"hello tarball");
 
-        let (_, stream2) = client.get_stream(&url).await.unwrap();
+        let (_, outcome2, stream2) = client.get_stream(&url).await.unwrap();
+        assert_eq!(outcome2, CacheOutcome::Hit);
         let collected2 = collect_stream(stream2).await.unwrap();
         assert_eq!(collected2, b"hello tarball");
     }
@@ -1279,12 +1315,12 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         // Cold run populates the cache.
-        let (_, s1) = client.get_stream(&url).await.unwrap();
+        let (_, _, s1) = client.get_stream(&url).await.unwrap();
         assert_eq!(collect_stream(s1).await.unwrap().len(), big_body.len());
 
         // Warm run — must be served from disc. Poll once and assert we receive
         // a non-terminal chunk, then drain the rest.
-        let (status, mut stream) = client.get_stream(&url).await.unwrap();
+        let (status, _, mut stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
 
         let first = stream
@@ -1676,7 +1712,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, mut stream) = client.get_stream(&url).await.unwrap();
+        let (status, _, mut stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
 
         let first = stream

@@ -346,7 +346,7 @@ async fn download_archive(
 ) -> Result<u64> {
     use tokio::io::AsyncWriteExt;
 
-    let (status, mut stream) = client.get_stream(url).await?;
+    let (status, _outcome, mut stream) = client.get_stream(url).await?;
     if status != StatusCode::OK {
         bail!("GET {url} returned {status}");
     }

@@ -6,6 +6,7 @@ pub mod asset;
 pub mod checksums;
 pub mod config;
 pub mod filter;
+pub mod format;
 pub mod install;
 pub mod platform;
 pub mod snapshot;
