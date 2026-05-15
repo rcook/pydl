@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.14] - 2026-05-15
+
+
+### Internal
+- Upgrade to latest dependencies (266a9ff)
+
 ## [0.1.13] - 2026-05-15
 
 
