@@ -97,7 +97,9 @@ pub fn run(args: Args) -> Result<()> {
         default_attrs: !filter.no_default_attrs,
     };
 
-    let dir = Path::new(".").canonicalize().context("resolving current directory")?;
+    let dir = Path::new(".")
+        .canonicalize()
+        .context("resolving current directory")?;
     write_config(&dir, &config, force)
 }
 

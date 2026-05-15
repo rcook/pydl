@@ -201,8 +201,7 @@ pub fn run(args: Args) -> Result<()> {
             };
             let client = cache_dir().ok().and_then(|d| CachingClient::new(d).ok());
             let install_root = install::install_root().ok();
-            let saw_no_checksum =
-                print_detailed(visible, client.as_ref(), install_root.as_deref());
+            let saw_no_checksum = print_detailed(visible, client.as_ref(), install_root.as_deref());
             if saw_no_checksum {
                 println!();
                 let note = "note: some assets are marked [checksum unavailable] because this \
@@ -215,10 +214,7 @@ pub fn run(args: Args) -> Result<()> {
                 let hint = format!(
                     "({hidden_count} older {noun} not shown \u{2014} pass --all-tags to list all)"
                 );
-                println!(
-                    "{}",
-                    hint.if_supports_color(Stdout, |t| t.dimmed())
-                );
+                println!("{}", hint.if_supports_color(Stdout, |t| t.dimmed()));
             }
         }
     }
