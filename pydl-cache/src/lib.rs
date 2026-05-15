@@ -119,7 +119,12 @@ impl CachingClient {
 
     fn entry_paths(&self, canonical: &str) -> EntryPaths {
         let digest = Sha256::digest(canonical.as_bytes());
-        let stem = self.cache_dir.join(format!("{digest:x}"));
+        let mut hex = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            use std::fmt::Write;
+            write!(&mut hex, "{byte:02x}").expect("write to String never fails");
+        }
+        let stem = self.cache_dir.join(hex);
         EntryPaths {
             meta: stem.with_extension("meta"),
             body: stem.with_extension("body"),
