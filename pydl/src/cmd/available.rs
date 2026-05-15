@@ -31,9 +31,14 @@ pub struct Args {
             "summary", "tag", "version",
             "platform", "no_platform",
             "default_attrs", "no_default_attrs",
+            "all_tags",
         ],
     )]
     pub pydl: bool,
+
+    /// Show all release tags. Without this flag only the newest tag is shown.
+    #[arg(long)]
+    pub all_tags: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,15 +193,32 @@ pub fn run(args: Args) -> Result<()> {
             println!("(pass -t/-v to filter or omit --summary for per-asset detail)");
         } else {
             let groups = filter_releases(releases, resolved)?;
+            let show_all = args.all_tags || args.filter.tag.is_some();
+            let (visible, hidden_count) = if show_all || groups.len() <= 1 {
+                (groups.as_slice(), 0)
+            } else {
+                (&groups[..1], groups.len() - 1)
+            };
             let client = cache_dir().ok().and_then(|d| CachingClient::new(d).ok());
             let install_root = install::install_root().ok();
-            let saw_no_checksum = print_detailed(&groups, client.as_ref(), install_root.as_deref());
+            let saw_no_checksum =
+                print_detailed(visible, client.as_ref(), install_root.as_deref());
             if saw_no_checksum {
                 println!();
                 let note = "note: some assets are marked [checksum unavailable] because this \
                             build of pydl\ndoes not include checksums for their release. \
                             Run `pydl self-update` to install a newer\nversion that may include them.";
                 println!("{}", note.if_supports_color(Stdout, |t| t.yellow()));
+            }
+            if hidden_count > 0 {
+                let noun = if hidden_count == 1 { "tag" } else { "tags" };
+                let hint = format!(
+                    "({hidden_count} older {noun} not shown \u{2014} pass --all-tags to list all)"
+                );
+                println!(
+                    "{}",
+                    hint.if_supports_color(Stdout, |t| t.dimmed())
+                );
             }
         }
     }
