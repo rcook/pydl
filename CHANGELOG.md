@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.13] - 2026-05-15
+
+
+### Bug Fixes
+- Fix #5, Fix #7: Improve output of pydl download (499659c)
+- Fix #4: pydl pin writes primary output to stdout (0e85936)
+- Fix #6: pydl available now only displays newest tag by default (f19a949)
+
+
+### Internal
+- Show absolute paths in pin and download output (f89c118)
+
 ## [0.1.12] - 2026-05-13
 
 
