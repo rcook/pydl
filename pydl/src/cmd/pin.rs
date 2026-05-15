@@ -97,7 +97,8 @@ pub fn run(args: Args) -> Result<()> {
         default_attrs: !filter.no_default_attrs,
     };
 
-    write_config(Path::new("."), &config, force)
+    let dir = Path::new(".").canonicalize().context("resolving current directory")?;
+    write_config(&dir, &config, force)
 }
 
 /// Given a non-empty slice of asset names, return the newest
