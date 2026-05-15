@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use log::info;
 use pydl_common::asset::{ParsedAsset, asset_sort_key, is_prerelease_key, parse_version_key};
 use pydl_common::checksums::{has_tag, iter_embedded_assets, newest_embedded_tag};
 use pydl_common::config::CONFIG_FILENAME;
@@ -86,7 +85,7 @@ pub fn run(args: Args) -> Result<()> {
         })?
     };
 
-    info!("selected tag={tag}, version={version}");
+    println!("selected tag={tag}, version={version}");
 
     let config = FilterConfig {
         // Only emit `tag` when the user explicitly passed --tag. With no
@@ -175,9 +174,9 @@ fn write_config(dir: &Path, config: &FilterConfig, force: bool) -> Result<()> {
         .with_context(|| format!("writing {}", path.display()))?;
 
     if replaced {
-        info!("wrote {} (overwrote existing file)", path.display());
+        println!("wrote {} (overwrote existing file)", path.display());
     } else {
-        info!("wrote {}", path.display());
+        println!("wrote {}", path.display());
     }
     Ok(())
 }
