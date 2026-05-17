@@ -69,8 +69,7 @@ pub async fn run(args: Args) -> Result<()> {
         fs::create_dir_all(&out_dir)
             .await
             .with_context(|| format!("creating output dir {}", out_dir.display()))?;
-        let out_dir = out_dir
-            .canonicalize()
+        let out_dir = dunce::canonicalize(&out_dir)
             .with_context(|| format!("resolving output dir {}", out_dir.display()))?;
         let out_path = out_dir.join(asset_name);
         fs::copy(&body_path, &out_path).await.with_context(|| {
