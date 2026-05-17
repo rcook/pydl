@@ -2,7 +2,7 @@
 
 A rolling triage of bugs, smells and open questions across the workspace. New items go under **Open**; resolved items move to **Resolved** with a one-line note. The historical investigation that motivated the snapshot model lives at the bottom under **Archived investigations** and is kept verbatim for reference.
 
-Lints (`cargo clippy --workspace --all-targets -- -D warnings`) are clean and the workspace test suite (269 tests across the four crates) passes. Items below are findings from a rolling re-scan, not a backlog of regressions.
+Lints (`cargo clippy --workspace --all-targets -- -D warnings`) are clean and the workspace test suite passes. Items below are findings from a rolling re-scan, not a backlog of regressions.
 
 Tags:
 

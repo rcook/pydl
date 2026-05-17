@@ -3,7 +3,7 @@
 Download, verify, install and run the standalone Python distributions published by [`astral-sh/python-build-standalone`](https://github.com/astral-sh/python-build-standalone).
 
 ```
-pydl [-C DIR] update
+pydl [-C DIR] update           [--full]
 pydl [-C DIR] available        [--summary | --pydl] [filter flags]
 pydl [-C DIR] download         [filter flags] [-o DIR]
 pydl [-C DIR] install          [filter flags]
@@ -40,7 +40,7 @@ pydl [-C DIR] self-update      [--online] [--pre] [--force] [--dry-run] [--allow
 
 `pydl update` is the single command that fetches release listings from upstream. It writes two files under `~/.pydl/snapshot/`:
 
-- `pbs-releases.json` — the full paginated list of `astral-sh/python-build-standalone` releases, consumed by `pydl available`.
+- `pbs-releases.json` — the `astral-sh/python-build-standalone` releases listing (fetched incrementally when a snapshot already exists), consumed by `pydl available`.
 - `pydl-latest.json` — the latest `rcook/pydl` release plus its assets, consumed by `pydl self-update`.
 
 `pydl available` and `pydl self-update` always print the snapshot's age (`snapshot from 3 hours ago`) and add a `run \`pydl update\` to refresh` hint when the snapshot is older than 7 days. With no snapshot present those commands error out — they never silently fall back to the network.
@@ -144,11 +144,14 @@ If no embedded tag carries the version under the current filters, the subcommand
 
 ### `pydl update`
 
-Refresh the local snapshot under `~/.pydl/snapshot/`: paginate the `astral-sh/python-build-standalone` releases listing and write `pbs-releases.json`, then fetch `releases/latest` for `rcook/pydl` and write `pydl-latest.json`. This is the one command that contacts `api.github.com` for release listings. Run it whenever you want `pydl available` or `pydl self-update` to see fresher upstream state — typically before exploring what's available, or after seeing a `run \`pydl update\` to refresh` hint.
+Refresh the local snapshot under `~/.pydl/snapshot/`: fetch the `astral-sh/python-build-standalone` releases listing and write `pbs-releases.json`, then fetch `releases/latest` for `rcook/pydl` and write `pydl-latest.json`. This is the one command that contacts `api.github.com` for release listings. Run it whenever you want `pydl available` or `pydl self-update` to see fresher upstream state — typically before exploring what's available, or after seeing a `run \`pydl update\` to refresh` hint.
 
 ```
-pydl update
+pydl update            # incremental: fetch only new releases since the last snapshot
+pydl update --full     # force a complete re-fetch of all releases
 ```
+
+When a snapshot already exists, `update` is **incremental by default**: it fetches pages from upstream only until it finds the newest release already in the snapshot, then prepends any new releases. This typically costs a single HTTP request instead of ~12. Pass `--full` to bypass the incremental logic and re-fetch every release — useful if you suspect upstream metadata has changed on an older release (rare).
 
 Both writes go through the same retry-with-backoff stack as the rest of `pydl`'s network code, so transient 504s recover automatically within bounds. Output reports the path of each snapshot written and a short summary (release count, latest pydl tag).
 

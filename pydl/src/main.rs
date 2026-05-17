@@ -91,7 +91,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// [network] Refresh local snapshots of upstream releases (Python releases list + latest pydl). The only command that fetches release listings; everything else either runs from the snapshot or hits the network only for asset bytes (`download`, `self-update`).
+    /// [network] Refresh local snapshots of upstream releases (Python releases list + latest pydl). Incremental by default — fetches only new releases when a snapshot exists; pass `--full` to re-fetch everything. The only command that fetches release listings; everything else either runs from the snapshot or hits the network only for asset bytes (`download`, `self-update`).
     Update(cmd::update::Args),
 
     /// [offline] List releases and their assets from the local snapshot. Run `pydl update` first.

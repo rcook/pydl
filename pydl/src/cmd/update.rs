@@ -16,6 +16,8 @@
 //! Both writes go through the existing `request_with_retry` + `CachingClient`
 //! stack, so the bounded-retry policy that issue #2 introduced still applies.
 
+use std::future::Future;
+
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use log::{debug, info, warn};
@@ -98,41 +100,44 @@ fn emit_pydl_trailer(release: &PydlRelease) {
 
 /// Fetch PBS releases: incremental when a valid snapshot exists, full otherwise.
 async fn fetch_pbs_releases(client: &CachingClient, force_full: bool) -> Result<Vec<Release>> {
-    if !force_full {
-        if let Some(envelope) = snapshot::read_pbs_releases()? {
-            let existing = envelope.payload;
-            match fetch_pbs_releases_incremental(client, &existing).await? {
-                Some(new_releases) if new_releases.is_empty() => {
-                    info!("already up to date (0 new releases)");
-                    return Ok(existing);
-                }
-                Some(new_releases) => {
-                    let count = new_releases.len();
-                    info!("{count} new release(s) found, prepending to snapshot");
-                    let mut merged = new_releases;
-                    merged.extend(existing);
-                    return Ok(merged);
-                }
-                None => {
-                    info!("incremental fetch not possible, performing full refresh");
-                }
+    let fetch_page = |page| fetch_releases_page(client, page, PER_PAGE);
+    if force_full {
+        info!("--full: performing complete re-fetch");
+    } else if let Some(envelope) = snapshot::read_pbs_releases()? {
+        let existing = envelope.payload;
+        match fetch_incremental(&fetch_page, &existing).await? {
+            Some(new_releases) if new_releases.is_empty() => {
+                info!("already up to date (0 new releases)");
+                return Ok(existing);
             }
-        } else {
-            debug!("no existing snapshot, performing full fetch");
+            Some(new_releases) => {
+                let count = new_releases.len();
+                info!("{count} new release(s) found, prepending to snapshot");
+                let mut merged = new_releases;
+                merged.extend(existing);
+                return Ok(merged);
+            }
+            None => {
+                info!("incremental fetch not possible, performing full refresh");
+            }
         }
     } else {
-        info!("--full: performing complete re-fetch");
+        debug!("no existing snapshot, performing full fetch");
     }
-    fetch_all_pbs_releases(client).await
+    fetch_all(&fetch_page).await
 }
 
 /// Attempt an incremental fetch: only pages newer than the snapshot's
 /// most-recent tag. Returns `None` when the caller should fall back to a
 /// full fetch (empty snapshot, known tag not found upstream).
-async fn fetch_pbs_releases_incremental(
-    client: &CachingClient,
+async fn fetch_incremental<F, Fut>(
+    fetch_page: &F,
     existing: &[Release],
-) -> Result<Option<Vec<Release>>> {
+) -> Result<Option<Vec<Release>>>
+where
+    F: Fn(usize) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<Vec<Release>>> + Send,
+{
     let Some(known_newest) = existing.first().map(|r| &r.tag_name) else {
         return Ok(None);
     };
@@ -141,7 +146,7 @@ async fn fetch_pbs_releases_incremental(
     let mut page = 1usize;
     loop {
         debug!("incremental: fetching page {page}");
-        let page_releases: Vec<Release> = fetch_releases_page(client, page, PER_PAGE).await?;
+        let page_releases: Vec<Release> = fetch_page(page).await?;
         let n = page_releases.len();
 
         if let Some(i) = page_releases
@@ -161,15 +166,17 @@ async fn fetch_pbs_releases_incremental(
     }
 }
 
-/// Paginate the Python releases endpoint until upstream returns a partial page.
-/// Same loop shape that lived in `pydl available` before this refactor —
-/// moved here so the network usage is concentrated in `update`.
-async fn fetch_all_pbs_releases(client: &CachingClient) -> Result<Vec<Release>> {
+/// Paginate the releases endpoint until upstream returns a partial page.
+async fn fetch_all<F, Fut>(fetch_page: &F) -> Result<Vec<Release>>
+where
+    F: Fn(usize) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<Vec<Release>>> + Send,
+{
     let mut all = Vec::new();
     let mut page = 1usize;
     loop {
         debug!("fetching releases page {page}");
-        let page_releases: Vec<Release> = fetch_releases_page(client, page, PER_PAGE).await?;
+        let page_releases: Vec<Release> = fetch_page(page).await?;
         let n = page_releases.len();
         all.extend(page_releases);
         if n < PER_PAGE {
@@ -231,5 +238,113 @@ impl ApiRelease {
                 })
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rel(tag: &str) -> Release {
+        Release {
+            tag_name: tag.to_owned(),
+            name: Some(tag.to_owned()),
+            draft: false,
+            prerelease: false,
+            published_at: None,
+            assets: vec![],
+        }
+    }
+
+    /// Build a page-fetcher backed by pre-canned pages. Each inner `Vec` is
+    /// one page of releases; page indices are 1-based.
+    fn make_fetcher(
+        pages: Vec<Vec<Release>>,
+    ) -> impl Fn(usize) -> futures_util::future::Ready<Result<Vec<Release>>> {
+        move |page: usize| {
+            let result = pages
+                .get(page.saturating_sub(1))
+                .cloned()
+                .unwrap_or_default();
+            futures_util::future::ready(Ok(result))
+        }
+    }
+
+    #[tokio::test]
+    async fn incremental_already_up_to_date() {
+        let existing = vec![rel("20260510"), rel("20260505")];
+        let pages = vec![vec![rel("20260510"), rel("20260505")]];
+        let fetcher = make_fetcher(pages);
+
+        let result = fetch_incremental(&fetcher, &existing).await.unwrap();
+        assert_eq!(result, Some(vec![]));
+    }
+
+    #[tokio::test]
+    async fn incremental_some_new_on_first_page() {
+        let existing = vec![rel("20260510"), rel("20260505")];
+        let pages = vec![vec![
+            rel("20260515"),
+            rel("20260512"),
+            rel("20260510"),
+            rel("20260505"),
+        ]];
+        let fetcher = make_fetcher(pages);
+
+        let result = fetch_incremental(&fetcher, &existing).await.unwrap();
+        let new = result.expect("should find new releases");
+        assert_eq!(new.len(), 2);
+        assert_eq!(new[0].tag_name, "20260515");
+        assert_eq!(new[1].tag_name, "20260512");
+    }
+
+    #[tokio::test]
+    async fn incremental_spans_two_pages() {
+        let existing = vec![rel("20260505"), rel("20260501")];
+        // Page 1: PER_PAGE items, all newer than the known tag.
+        let page1: Vec<Release> = (0..PER_PAGE)
+            .map(|i| rel(&format!("2026060{i:02}")))
+            .collect();
+        // Page 2: starts with one more new release, then the known tag.
+        let page2 = vec![rel("20260520"), rel("20260505")];
+        let fetcher = make_fetcher(vec![page1.clone(), page2]);
+
+        let result = fetch_incremental(&fetcher, &existing).await.unwrap();
+        let new = result.expect("should find new releases");
+        assert_eq!(new.len(), PER_PAGE + 1);
+        assert_eq!(new.last().unwrap().tag_name, "20260520");
+    }
+
+    #[tokio::test]
+    async fn incremental_tag_not_found_falls_back() {
+        let existing = vec![rel("20250101")];
+        // Two partial pages that never contain the known tag.
+        let pages = vec![vec![rel("20260515"), rel("20260510")]];
+        let fetcher = make_fetcher(pages);
+
+        let result = fetch_incremental(&fetcher, &existing).await.unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn incremental_empty_existing_falls_back() {
+        let existing: Vec<Release> = vec![];
+        let fetcher = make_fetcher(vec![vec![rel("20260510")]]);
+
+        let result = fetch_incremental(&fetcher, &existing).await.unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn fetch_all_collects_across_pages() {
+        let page1: Vec<Release> = (0..PER_PAGE)
+            .map(|i| rel(&format!("2026060{i:02}")))
+            .collect();
+        let page2 = vec![rel("20260505"), rel("20260501")];
+        let expected_len = page1.len() + page2.len();
+        let fetcher = make_fetcher(vec![page1, page2]);
+
+        let all = fetch_all(&fetcher).await.unwrap();
+        assert_eq!(all.len(), expected_len);
     }
 }
