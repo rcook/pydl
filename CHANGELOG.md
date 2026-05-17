@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.16] - 2026-05-17
+
+
+### Internal
+- Upgrade reqwest (026e3c8)
+- Implement incremental refresh of releases (a9d0c4e)
+
 ## [0.1.15] - 2026-05-17
 
 
