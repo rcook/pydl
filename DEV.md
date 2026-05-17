@@ -24,7 +24,6 @@ README.md             user-facing entry point
 DEV.md                this file
 DESIGN.md             design rationale for the checksum-verification model
 MAINTENANCE.md        recurring maintenance prompts
-TODO.md               maintainer backlog (small, dated items)
 ISSUES.md             rolling triage of bugs, smells and resolved investigations
 dev.sh                developer entry point (see below)
 checksums/            committed <tag>.sha256sums files, embedded at build time
@@ -79,6 +78,7 @@ Key invariants:
 - **The snapshot consolidates release-listing traffic.** `pydl update` paginates `astral-sh/python-build-standalone` releases and fetches `releases/latest` for `rcook/pydl`, then writes both as JSON under `~/.pydl/snapshot/`. `pydl available` and the default `pydl self-update` never touch the network for these listings; they read the snapshot.
 - **The cache is the handoff point for asset bytes.** `download` warms it, `install`/`python` read from it via `cached_body_path`. `update` also flows through the cache, but its product is the snapshot file, not a cached body.
 - **The embedded checksum table is the canonical "what exists" index** for offline asset resolution. Asset names encode version, triple, flavour — enough for `filter_embedded` to resolve any `FilterArgs` without the network and without the snapshot.
+- **Path canonicalization uses `dunce::canonicalize`** rather than `std::fs::canonicalize`. On Windows `std` always returns extended-length `\\?\`-prefixed paths; `dunce` strips the prefix when the path doesn't require it, producing regular local paths that are friendlier in user-facing output. On non-Windows it delegates directly to `std` with no overhead.
 
 ## Self-update
 

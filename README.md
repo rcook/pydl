@@ -77,7 +77,7 @@ cd pydl
 
 See [`pydl/README.md`](./pydl/README.md) for the full user guide — subcommands, filter flags, the `.pydl.json` pin file and every supported workflow.
 
-Quick orientation:
+Quick orientation (every command accepts `-C <DIR>` to run as if started in that directory — see [`pydl/README.md`](./pydl/README.md) for details):
 
 | Command               | Network?       | What it does                                                                                        |
 |-----------------------|----------------|-----------------------------------------------------------------------------------------------------|
@@ -109,7 +109,6 @@ All three are safe to delete; the next `pydl update` rebuilds the snapshot, and 
 - [`DEV.md`](./DEV.md) — contributor guide (workspace layout, build/test/lint workflow, CI, how to refresh the embedded checksum set, how to add a new crate).
 - [`DESIGN.md`](./DESIGN.md) — why `pydl` verifies assets the way it does (threat model, alternatives considered).
 - [`ISSUES.md`](./ISSUES.md) — rolling triage of bugs, smells and resolved investigations across the workspace.
-- [`TODO.md`](./TODO.md) — small dated items the maintainer plans to revisit.
 - Library READMEs: [`pydl-cache`](./pydl-cache/README.md) (the pull-through HTTP cache), [`get-checksums`](./get-checksums/README.md) (maintenance tool to populate `./checksums/`), [`check-checksums`](./check-checksums/README.md) (CI trip-wire).
 
 ## Licence

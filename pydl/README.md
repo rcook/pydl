@@ -3,17 +3,17 @@
 Download, verify, install and run the standalone Python distributions published by [`astral-sh/python-build-standalone`](https://github.com/astral-sh/python-build-standalone).
 
 ```
-pydl update
-pydl available        [--summary | --pydl] [filter flags]
-pydl download         [filter flags] [-o DIR]
-pydl install          [filter flags]
-pydl installed        [filter flags]
-pydl uninstall        [filter flags] [--all] [--yes]
-pydl python           [filter flags] -- [python args]
-pydl pin              [filter flags]
-pydl cache            {info,clear [--yes]}
-pydl completions      <SHELL>
-pydl self-update      [--online] [--pre] [--force] [--dry-run] [--allow-missing-checksum]
+pydl [-C DIR] update
+pydl [-C DIR] available        [--summary | --pydl] [filter flags]
+pydl [-C DIR] download         [filter flags] [-o DIR]
+pydl [-C DIR] install          [filter flags]
+pydl [-C DIR] installed        [filter flags]
+pydl [-C DIR] uninstall        [filter flags] [--all] [--yes]
+pydl [-C DIR] python           [filter flags] -- [python args]
+pydl [-C DIR] pin              [filter flags]
+pydl [-C DIR] cache            {info,clear [--yes]}
+pydl [-C DIR] completions      <SHELL>
+pydl [-C DIR] self-update      [--online] [--pre] [--force] [--dry-run] [--allow-missing-checksum]
 ```
 
 ## Subcommands at a glance
@@ -44,6 +44,17 @@ pydl self-update      [--online] [--pre] [--force] [--dry-run] [--allow-missing-
 `pydl available` and `pydl self-update` always print the snapshot's age (`snapshot from 3 hours ago`) and add a `run \`pydl update\` to refresh` hint when the snapshot is older than 7 days. With no snapshot present those commands error out — they never silently fall back to the network.
 
 The snapshot is **not** part of the trust model: `install` still resolves against the embedded checksum set, `download` still verifies SHA-256 against committed checksums and `self-update` still verifies the downloaded binary against the release's `SHA256SUMS` manifest. See [`../DESIGN.md`](../DESIGN.md) for details.
+
+## Global flags
+
+These flags are accepted by every subcommand and may appear before or after the subcommand name.
+
+| Flag                              | Effect                                                                                                                   |
+|-----------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `-C <DIR>`                        | Run as if pydl was started in `DIR`. Affects `.pydl.json` discovery, `pin` output and resolution of relative paths in other flags (e.g. `-o`). Follows the `git -C` / `make -C` convention. |
+| `-l, --log <DIRECTIVE>`           | Log-filter directive (overrides `RUST_LOG`). Same syntax as `RUST_LOG`, e.g. `debug`, `pydl=trace,warn`.                 |
+| `--log-timestamps`                | Prefix log lines with a timestamp (off by default).                                                                      |
+| `--no-log-timestamps`             | Suppress log timestamps. Inverse of `--log-timestamps`; matches the default.                                             |
 
 ## Filter flags
 
@@ -365,6 +376,8 @@ For the *why* behind this design (tamper-resistance trade-offs, alternatives con
 | `RUST_LOG`                | `info`   | Log-filter directive. See the [`env_logger` docs](https://docs.rs/env_logger/) for syntax.              |
 
 The `-l` / `--log <DIRECTIVE>` CLI flag accepts the same directive syntax as `RUST_LOG` and **overrides** `RUST_LOG` when both are set. It's global (works before or after the subcommand, e.g. `pydl -l debug available` or `pydl available -l debug`) and lives alongside the environment variable for one-off invocations.
+
+The `-C <DIR>` flag changes the effective working directory before any subcommand logic runs. This affects `.pydl.json` discovery, `pin` output and resolution of relative paths such as `download -o ./dist`. See [Global flags](#global-flags) for details.
 
 ## See also
 
