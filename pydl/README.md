@@ -11,6 +11,7 @@ pydl [-C DIR] installed        [filter flags]
 pydl [-C DIR] uninstall        [filter flags] [--all] [--yes]
 pydl [-C DIR] python           [filter flags] -- [python args]
 pydl [-C DIR] pin              [filter flags]
+pydl [-C DIR] status
 pydl [-C DIR] cache            {info,clear [--yes]}
 pydl [-C DIR] completions      <SHELL>
 pydl [-C DIR] self-update      [--online] [--pre] [--force] [--dry-run] [--allow-missing-checksum]
@@ -28,6 +29,7 @@ pydl [-C DIR] self-update      [--online] [--pre] [--force] [--dry-run] [--allow
 | `pydl uninstall`      | no                 | Remove an installed asset (dry-run by default; `--yes` to delete).                          |
 | `pydl python -- …`    | no                 | Run a previously-installed interpreter.                                                     |
 | `pydl pin`            | no                 | Freeze a filter into `.pydl.json` for the project.                                          |
+| `pydl status`         | no                 | Report pin and asset state for the working directory.                                       |
 | `pydl cache`          | no                 | Inspect or clear the on-disc HTTP cache.                                                    |
 | `pydl completions`    | no                 | Emit a shell-completion script to stdout.                                                   |
 | `pydl self-update`    | always             | Replace the running binary with the latest `rcook/pydl` release. Reads the version from the snapshot by default; `--online` bypasses the snapshot. The binary itself is always downloaded over the network. |
@@ -292,6 +294,27 @@ cat .pydl.json
 #   "default_attrs": true
 # }
 ```
+
+### `pydl status`
+
+Report the pin and asset state for the current working directory (or the directory given by `-C`). Read-only — never writes files or contacts the network. Accepts no filter flags; it reports on whatever `.pydl.json` says.
+
+```
+pydl status
+pydl -C /path/to/project status
+```
+
+Output fields:
+
+| Field      | Meaning |
+|------------|---------|
+| `pin`      | Absolute path of the `.pydl.json` found via the git-style upward walk. |
+| `version`  | Python version from the config. |
+| `tag`      | Release tag; `(auto-selected)` when the config omits `tag` and the newest matching embedded tag is used. |
+| `asset`    | Full asset filename resolved from the filters. |
+| `status`   | One of: `installed`, `cached`, `checksum unavailable`, `not downloaded`. Each non-installed state includes a hint for the next command to run. |
+
+If no `.pydl.json` is found in the directory or any ancestor, prints `no .pydl.json found` and exits successfully.
 
 ### `pydl cache`
 

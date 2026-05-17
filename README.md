@@ -89,6 +89,7 @@ Quick orientation (every command accepts `-C <DIR>` to run as if started in that
 | `pydl uninstall`      | no             | Remove an installed asset.                                                                          |
 | `pydl python -- …`    | no             | Run a previously-installed interpreter.                                                             |
 | `pydl pin`            | no             | Freeze tag/version into `.pydl.json` for the project.                                               |
+| `pydl status`         | no             | Report pin and asset state for the working directory.                                               |
 | `pydl cache`          | no             | Inspect or clear the HTTP cache.                                                                    |
 | `pydl completions`    | no             | Emit a shell-completion script.                                                                     |
 | `pydl self-update`    | always         | Replace the running binary with the latest GitHub release. Reads the version from the snapshot by default; `--online` bypasses it. The binary itself is always downloaded over the network. |

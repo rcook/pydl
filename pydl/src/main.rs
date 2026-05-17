@@ -115,6 +115,9 @@ enum Cmd {
     /// [offline] Write the current filter flags to a `.pydl.json` in the working directory.
     Pin(cmd::pin::Args),
 
+    /// [offline] Report the pin and asset state for the current working directory.
+    Status(cmd::status::Args),
+
     /// [offline] Inspect or clear the on-disc HTTP cache at ~/.pydl/cache/.
     Cache(cmd::cache::Args),
 
@@ -154,6 +157,7 @@ async fn main() -> Result<()> {
         Cmd::Uninstall(args) => cmd::uninstall::run(args),
         Cmd::Python(args) => cmd::python::run(args),
         Cmd::Pin(args) => cmd::pin::run(args),
+        Cmd::Status(args) => cmd::status::run(args),
         Cmd::Cache(args) => cmd::cache::run(args),
         Cmd::Completions(args) => cmd::completions::run(args),
         Cmd::SelfUpdate(args) => cmd::self_update::run(args).await,

@@ -159,7 +159,7 @@ The cache library carries the bulk of the test suite, covering freshness, revali
 
 ## Running the binaries
 
-- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `update`, `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `cache`, `completions`, `self-update`. See [`pydl/README.md`](./pydl/README.md) for full details.
+- **`./dev.sh pydl <subcommand> [args]`** — the user-facing binary. Subcommands are `update`, `available`, `download`, `install`, `installed`, `uninstall`, `python`, `pin`, `status`, `cache`, `completions`, `self-update`. See [`pydl/README.md`](./pydl/README.md) for full details.
 - **`./dev.sh get-checksums <dir>`** — project maintenance: mirrors every per-release `SHA256SUMS` into `<dir>` (by convention `./checksums/`). Idempotent; the results are embedded into `pydl` at build time for offline verification.
 - **`./dev.sh check-checksums <dir>`** — CI trip-wire: verifies every `<dir>/<tag>.sha256sums` file is bit-exact with what upstream currently serves. Exits non-zero on any mismatch. Used by `.github/workflows/check-checksums.yml`. See [`check-checksums/README.md`](./check-checksums/README.md).
 - **`./dev.sh install-pydl`** — builds `pydl` in release mode and copies the resulting binary to `~/.local/bin/pydl`, creating the directory if needed. Warns if `~/.local/bin` is not on your `PATH`. Re-run after any change you want to exercise via a `pydl` on `PATH` rather than through `cargo run`.

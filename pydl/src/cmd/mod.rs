@@ -7,5 +7,6 @@ pub mod installed;
 pub mod pin;
 pub mod python;
 pub mod self_update;
+pub mod status;
 pub mod uninstall;
 pub mod update;
