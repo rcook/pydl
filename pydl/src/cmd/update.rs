@@ -29,16 +29,20 @@ const SELF_OWNER: &str = "rcook";
 const SELF_REPO: &str = "pydl";
 
 #[derive(Parser, Debug)]
-pub struct Args {}
+pub struct Args {
+    /// Force a complete re-fetch of all releases, bypassing incremental logic.
+    #[arg(long)]
+    pub full: bool,
+}
 
 #[allow(clippy::needless_pass_by_value)]
-pub async fn run(_args: Args) -> Result<()> {
+pub async fn run(args: Args) -> Result<()> {
     let min_freshness = min_freshness_secs()?;
     debug!("cache min-freshness floor: {min_freshness}s");
     let client = make_client(crate::USER_AGENT, min_freshness)?;
 
     info!("fetching python-build-standalone releases...");
-    let releases = fetch_all_pbs_releases(&client).await?;
+    let releases = fetch_pbs_releases(&client, args.full).await?;
     snapshot::write_pbs_releases(&releases)
         .with_context(|| "writing pbs-releases snapshot".to_owned())?;
     info!(
@@ -90,6 +94,71 @@ fn emit_pydl_trailer(release: &PydlRelease) {
         return;
     };
     info!("{}", snapshot::format_pydl_version_line(&running, &latest));
+}
+
+/// Fetch PBS releases: incremental when a valid snapshot exists, full otherwise.
+async fn fetch_pbs_releases(client: &CachingClient, force_full: bool) -> Result<Vec<Release>> {
+    if !force_full {
+        if let Some(envelope) = snapshot::read_pbs_releases()? {
+            let existing = envelope.payload;
+            match fetch_pbs_releases_incremental(client, &existing).await? {
+                Some(new_releases) if new_releases.is_empty() => {
+                    info!("already up to date (0 new releases)");
+                    return Ok(existing);
+                }
+                Some(new_releases) => {
+                    let count = new_releases.len();
+                    info!("{count} new release(s) found, prepending to snapshot");
+                    let mut merged = new_releases;
+                    merged.extend(existing);
+                    return Ok(merged);
+                }
+                None => {
+                    info!("incremental fetch not possible, performing full refresh");
+                }
+            }
+        } else {
+            debug!("no existing snapshot, performing full fetch");
+        }
+    } else {
+        info!("--full: performing complete re-fetch");
+    }
+    fetch_all_pbs_releases(client).await
+}
+
+/// Attempt an incremental fetch: only pages newer than the snapshot's
+/// most-recent tag. Returns `None` when the caller should fall back to a
+/// full fetch (empty snapshot, known tag not found upstream).
+async fn fetch_pbs_releases_incremental(
+    client: &CachingClient,
+    existing: &[Release],
+) -> Result<Option<Vec<Release>>> {
+    let Some(known_newest) = existing.first().map(|r| &r.tag_name) else {
+        return Ok(None);
+    };
+
+    let mut new_releases: Vec<Release> = Vec::new();
+    let mut page = 1usize;
+    loop {
+        debug!("incremental: fetching page {page}");
+        let page_releases: Vec<Release> = fetch_releases_page(client, page, PER_PAGE).await?;
+        let n = page_releases.len();
+
+        if let Some(i) = page_releases
+            .iter()
+            .position(|r| r.tag_name == *known_newest)
+        {
+            new_releases.extend(page_releases.into_iter().take(i));
+            return Ok(Some(new_releases));
+        }
+
+        new_releases.extend(page_releases);
+
+        if n < PER_PAGE {
+            return Ok(None);
+        }
+        page += 1;
+    }
 }
 
 /// Paginate the Python releases endpoint until upstream returns a partial page.
