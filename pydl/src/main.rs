@@ -1,6 +1,8 @@
 mod cmd;
 
-use anyhow::Result;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 /// HTTP `User-Agent` for outbound requests from `pydl`. Subcommands that mint
@@ -57,6 +59,12 @@ const VERSION_STRING: &str = concat!(
                   installs live under `$HOME/.pydl/asset/`."
 )]
 pub struct Cli {
+    /// Run as if pydl was started in <DIR> instead of the current working
+    /// directory. Affects config discovery, pin output and resolution of
+    /// relative paths in other flags.
+    #[arg(short = 'C', global = true, value_name = "DIR")]
+    directory: Option<PathBuf>,
+
     /// Log filter directive (overrides `RUST_LOG`). Accepts the same syntax
     /// as `RUST_LOG`, e.g. `debug`, `pydl=trace,warn`, `pydl_cache=debug`.
     #[arg(short = 'l', long = "log", global = true, value_name = "DIRECTIVE")]
@@ -133,6 +141,10 @@ async fn main() -> Result<()> {
         builder.format_timestamp(None);
     }
     builder.init();
+    if let Some(dir) = &cli.directory {
+        std::env::set_current_dir(dir)
+            .with_context(|| format!("changing to directory {}", dir.display()))?;
+    }
     match cli.cmd {
         Cmd::Update(args) => cmd::update::run(args).await,
         Cmd::Available(args) => cmd::available::run(args),
