@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.17] - 2026-05-17
+
+
+### Tooling
+- Document --full flag, add incremental-fetch tests, fix clippy lints (8a5a6c0)
+
 ## [0.1.16] - 2026-05-17
 
 
