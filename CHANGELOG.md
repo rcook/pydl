@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.15] - 2026-05-17
+
+
+### Bug Fixes
+- Fix #8: Remove UNC prefix for Windows local paths (ccca7b7)
+- Fix #10: Add -C to set working directory (8fe2338)
+- Fix #11: Add "pydl status" (3c29b02)
+
+
+### Tooling
+- Update documentation (525b156)
+
 ## [0.1.14] - 2026-05-15
 
 
