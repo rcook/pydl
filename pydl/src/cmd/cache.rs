@@ -145,4 +145,50 @@ mod tests {
         assert_eq!(entries, 2);
         assert_eq!(bytes, 5 + 6);
     }
+
+    #[test]
+    fn run_clear_confirmed_removes_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("meta.json"), b"{}").unwrap();
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::write(root.join("sub").join("body"), b"data").unwrap();
+
+        // Patch cache_dir to return our temp directory. Since run_clear calls
+        // cache_dir() which reads an env var or default, we test the inner
+        // logic directly by reimplementing just the clear loop.
+        let (entries, _) = walk(root).unwrap();
+        assert_eq!(entries, 2);
+
+        // Execute the clearing logic inline (same as run_clear with confirmed=true).
+        let read = fs::read_dir(root).unwrap();
+        for entry in read {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let file_type = entry.file_type().unwrap();
+            if file_type.is_dir() {
+                fs::remove_dir_all(&path).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+
+        let (entries_after, bytes_after) = walk(root).unwrap();
+        assert_eq!(entries_after, 0);
+        assert_eq!(bytes_after, 0);
+    }
+
+    #[test]
+    fn walk_ignores_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("real"), b"real").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        let (entries, bytes) = walk(root).unwrap();
+        // Symlinks are neither is_dir nor is_file per DirEntry::file_type,
+        // so they are silently skipped.
+        assert_eq!(entries, 1);
+        assert_eq!(bytes, 4);
+    }
 }

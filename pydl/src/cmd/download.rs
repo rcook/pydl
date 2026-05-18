@@ -131,3 +131,99 @@ async fn stream_through_cache(
     }
     Ok((total, outcome))
 }
+
+#[cfg(test)]
+mod tests {
+    use pydl_cache::{CacheOutcome, CachingClient};
+    use sha2::{Digest, Sha256};
+    use tempfile::TempDir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    fn sha256_hex(data: &[u8]) -> String {
+        let mut h = Sha256::new();
+        h.update(data);
+        pydl_common::checksums::hex_digest(h)
+    }
+
+    #[tokio::test]
+    async fn stream_through_cache_happy_path() {
+        let cache_dir = TempDir::new().unwrap();
+        let server = MockServer::start().await;
+        let body = b"reproducible python bytes";
+
+        Mock::given(method("GET"))
+            .and(path("/asset.tar.zst"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/asset.tar.zst", server.uri());
+        let expected = sha256_hex(body);
+
+        let (total, outcome) = stream_through_cache(&client, &url, &expected, "asset.tar.zst")
+            .await
+            .expect("matching hash must succeed");
+
+        assert_eq!(total, body.len() as u64);
+        assert_eq!(outcome, CacheOutcome::Downloaded);
+    }
+
+    #[tokio::test]
+    async fn stream_through_cache_hash_mismatch_evicts_and_errors() {
+        let cache_dir = TempDir::new().unwrap();
+        let server = MockServer::start().await;
+        let body = b"wrong bytes from a compromised mirror";
+
+        Mock::given(method("GET"))
+            .and(path("/asset.tar.zst"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/asset.tar.zst", server.uri());
+        let wrong_expected = "0".repeat(64);
+
+        let err = stream_through_cache(&client, &url, &wrong_expected, "asset.tar.zst")
+            .await
+            .expect_err("mismatched hash must error");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("sha256 mismatch"), "got: {msg}");
+        assert!(msg.contains("asset.tar.zst"), "got: {msg}");
+        assert!(msg.contains("cache entry evicted"), "got: {msg}");
+
+        // Verify the cache entry was actually evicted.
+        let cached = client.cached_body_path(&url).unwrap();
+        assert!(cached.is_none(), "cache entry should have been evicted");
+    }
+
+    #[tokio::test]
+    async fn stream_through_cache_non_200_bails() {
+        let cache_dir = TempDir::new().unwrap();
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/asset.tar.zst"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/asset.tar.zst", server.uri());
+
+        let err = stream_through_cache(&client, &url, &"a".repeat(64), "asset.tar.zst")
+            .await
+            .expect_err("non-200 must error");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("404"), "got: {msg}");
+    }
+}

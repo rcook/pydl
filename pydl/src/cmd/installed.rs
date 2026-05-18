@@ -246,4 +246,76 @@ mod tests {
             .collect();
         assert_eq!(names, vec![a, b, c]);
     }
+
+    fn listing(asset_name: Option<&'static str>) -> Listing {
+        Listing {
+            path: PathBuf::from("/fake"),
+            asset_name,
+        }
+    }
+
+    fn bare_filter() -> FilterArgs {
+        FilterArgs {
+            tag: None,
+            version: None,
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        }
+    }
+
+    #[test]
+    fn matches_filter_no_filters_accepts_everything() {
+        let l = listing(None);
+        assert!(matches_filter(&l, &bare_filter()));
+    }
+
+    #[test]
+    fn matches_filter_tag_set_rejects_unknown_hash() {
+        let l = listing(None);
+        let mut f = bare_filter();
+        f.tag = Some("20260101".to_owned());
+        assert!(!matches_filter(&l, &f));
+    }
+
+    #[test]
+    fn matches_filter_tag_matches() {
+        let l = listing(Some(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        ));
+        let mut f = bare_filter();
+        f.tag = Some("20260101".to_owned());
+        assert!(matches_filter(&l, &f));
+    }
+
+    #[test]
+    fn matches_filter_tag_mismatch() {
+        let l = listing(Some(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        ));
+        let mut f = bare_filter();
+        f.tag = Some("20250101".to_owned());
+        assert!(!matches_filter(&l, &f));
+    }
+
+    #[test]
+    fn matches_filter_version_matches() {
+        let l = listing(Some(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        ));
+        let mut f = bare_filter();
+        f.version = Some("3.13.2".to_owned());
+        assert!(matches_filter(&l, &f));
+    }
+
+    #[test]
+    fn matches_filter_version_mismatch() {
+        let l = listing(Some(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        ));
+        let mut f = bare_filter();
+        f.version = Some("3.12.0".to_owned());
+        assert!(!matches_filter(&l, &f));
+    }
 }

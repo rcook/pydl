@@ -259,6 +259,11 @@ fn emit_pydl_line(release: &pydl_common::snapshot::PydlRelease) {
 
 #[cfg(test)]
 mod tests {
+    use pydl_cache::CachingClient;
+    use pydl_common::filter::{Asset, Release};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     use super::*;
 
     #[test]
@@ -279,5 +284,95 @@ mod tests {
             Some(tmp.path()),
         );
         assert_eq!(status, AssetStatus::Installed);
+    }
+
+    #[tokio::test]
+    async fn asset_status_cached() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/asset.tar.zst"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"data"))
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/asset.tar.zst", server.uri());
+        // Prime the cache.
+        let _ = client.request(pydl_cache::Method::GET, &url).await.unwrap();
+
+        // asset_status only checks cached_body_path, so we use a tag that
+        // exists in the embedded checksums to avoid the NoChecksum path.
+        // We construct a URL matching the one asset_status would build.
+        let (tag, asset_name) = pydl_common::checksums::iter_embedded_assets()
+            .next()
+            .unwrap();
+
+        // Re-prime the cache with the canonical URL format asset_status uses.
+        let canonical_url = format!(
+            "https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}"
+        );
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"data"))
+            .mount(&server)
+            .await;
+
+        // Create a separate client whose cache has this entry pre-warmed.
+        let cache_dir2 = tempfile::tempdir().unwrap();
+        let client2 = CachingClient::new(cache_dir2.path()).unwrap();
+        let _ = client2
+            .request(pydl_cache::Method::GET, &canonical_url)
+            .await
+            .unwrap();
+
+        let status = asset_status(tag, asset_name, Some(&client2), None);
+        assert_eq!(status, AssetStatus::Cached);
+    }
+
+    #[test]
+    fn asset_status_available_when_checksum_exists_but_not_cached() {
+        let (tag, asset_name) = pydl_common::checksums::iter_embedded_assets()
+            .next()
+            .unwrap();
+        let status = asset_status(tag, asset_name, None, None);
+        assert_eq!(status, AssetStatus::Available);
+    }
+
+    #[test]
+    fn print_detailed_empty_groups() {
+        let groups: Vec<(&Release, Vec<&Asset>)> = vec![];
+        let saw_no_checksum = print_detailed(&groups, None, None);
+        assert!(!saw_no_checksum);
+    }
+
+    #[test]
+    fn print_detailed_returns_no_checksum_flag_when_tag_missing() {
+        let release = Release {
+            tag_name: "nonexistent_tag_xyz".to_owned(),
+            name: None,
+            draft: false,
+            prerelease: false,
+            published_at: None,
+            assets: vec![Asset {
+                name: "some-asset.tar.zst".to_owned(),
+                size: 1024,
+                browser_download_url: "https://example.test/asset".to_owned(),
+            }],
+        };
+        let assets: Vec<&Asset> = release.assets.iter().collect();
+        let groups = vec![(&release, assets)];
+        let saw_no_checksum = print_detailed(&groups, None, None);
+        assert!(saw_no_checksum);
+    }
+
+    #[test]
+    fn emit_pydl_line_does_not_panic() {
+        let release = pydl_common::snapshot::PydlRelease {
+            tag_name: "v99.99.99".to_owned(),
+            assets: vec![],
+        };
+        // Should not panic even though the version is far ahead of running.
+        emit_pydl_line(&release);
     }
 }

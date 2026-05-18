@@ -1354,4 +1354,111 @@ mod tests {
         auto_select_tag(&mut args, &rels).unwrap();
         assert_eq!(args.tag.as_deref(), Some("20260101"));
     }
+
+    #[test]
+    fn name_matches_filters_no_filters_accepts_parseable() {
+        let filters = ResolvedFilters {
+            tag: None,
+            version: None,
+            platform: None,
+            default_attrs: None,
+        };
+        assert!(name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            filters,
+        ));
+    }
+
+    #[test]
+    fn name_matches_filters_rejects_unparseable() {
+        let filters = ResolvedFilters {
+            tag: None,
+            version: None,
+            platform: None,
+            default_attrs: None,
+        };
+        assert!(!name_matches_filters("not-a-valid-asset-name.tar.gz", filters));
+    }
+
+    #[test]
+    fn name_matches_filters_version_mismatch() {
+        let filters = ResolvedFilters {
+            tag: None,
+            version: Some("3.12.0"),
+            platform: None,
+            default_attrs: None,
+        };
+        assert!(!name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            filters,
+        ));
+    }
+
+    #[test]
+    fn name_matches_filters_version_match() {
+        let filters = ResolvedFilters {
+            tag: None,
+            version: Some("3.13.2"),
+            platform: None,
+            default_attrs: None,
+        };
+        assert!(name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            filters,
+        ));
+    }
+
+    #[test]
+    fn name_matches_filters_platform_mismatch() {
+        use crate::platform::{Arch, Os, Platform};
+        let filters = ResolvedFilters {
+            tag: None,
+            version: None,
+            platform: Some(Platform {
+                os: Os::Darwin,
+                arch: Arch::Aarch64,
+            }),
+            default_attrs: None,
+        };
+        assert!(!name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            filters,
+        ));
+    }
+
+    #[test]
+    fn name_matches_filters_default_attrs_flavour_mismatch() {
+        use crate::platform::DefaultAttrs;
+        let filters = ResolvedFilters {
+            tag: None,
+            version: None,
+            platform: None,
+            default_attrs: Some(DefaultAttrs {
+                flavour: "install_only",
+                triple_suffix: None,
+            }),
+        };
+        assert!(!name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-debug.tar.gz",
+            filters,
+        ));
+    }
+
+    #[test]
+    fn name_matches_filters_default_attrs_triple_suffix_mismatch() {
+        use crate::platform::DefaultAttrs;
+        let filters = ResolvedFilters {
+            tag: None,
+            version: None,
+            platform: None,
+            default_attrs: Some(DefaultAttrs {
+                flavour: "install_only",
+                triple_suffix: Some("-pc-windows-msvc"),
+            }),
+        };
+        assert!(!name_matches_filters(
+            "cpython-3.13.2+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            filters,
+        ));
+    }
 }

@@ -709,4 +709,93 @@ mod tests {
         .await
         .expect("--allow-missing-checksum must downgrade missing manifest to a warning");
     }
+
+    fn make_tar_gz(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        let buf = Vec::new();
+        let enc = GzEncoder::new(buf, Compression::fast());
+        let mut ar = tar::Builder::new(enc);
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            ar.append_data(&mut header, name, &data[..]).unwrap();
+        }
+        ar.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn extract_from_tar_gz_finds_pydl_binary() {
+        let archive_bytes = make_tar_gz(&[
+            ("some-dir/README", b"readme"),
+            ("some-dir/pydl", b"the pydl binary content"),
+        ]);
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("pydl.tar.gz");
+        std::fs::write(&archive_path, &archive_bytes).unwrap();
+
+        let result = extract_from_tar_gz(&archive_path, dir.path()).unwrap();
+        assert_eq!(result, dir.path().join("pydl"));
+        assert_eq!(
+            std::fs::read_to_string(&result).unwrap(),
+            "the pydl binary content"
+        );
+    }
+
+    #[test]
+    fn extract_from_tar_gz_errors_when_no_pydl() {
+        let archive_bytes = make_tar_gz(&[("some-dir/other", b"not pydl")]);
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("pydl.tar.gz");
+        std::fs::write(&archive_path, &archive_bytes).unwrap();
+
+        let err = extract_from_tar_gz(&archive_path, dir.path())
+            .expect_err("missing pydl binary must error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no `pydl` binary"), "got: {msg}");
+    }
+
+    #[test]
+    fn extract_from_zip_finds_pydl_exe() {
+        use std::io::Write;
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("pydl.zip");
+        {
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("pydl-v0.0.0/pydl.exe", opts).unwrap();
+            zip.write_all(b"the pydl exe content").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let result = extract_from_zip(&archive_path, dir.path()).unwrap();
+        assert_eq!(result, dir.path().join("pydl.exe"));
+        assert_eq!(
+            std::fs::read_to_string(&result).unwrap(),
+            "the pydl exe content"
+        );
+    }
+
+    #[test]
+    fn extract_from_zip_errors_when_no_pydl_exe() {
+        use std::io::Write;
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("pydl.zip");
+        {
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("other.txt", opts).unwrap();
+            zip.write_all(b"not pydl").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let err = extract_from_zip(&archive_path, dir.path())
+            .expect_err("missing pydl.exe must error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no `pydl.exe` binary"), "got: {msg}");
+    }
 }

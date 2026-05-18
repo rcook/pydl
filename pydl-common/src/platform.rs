@@ -224,4 +224,12 @@ mod tests {
         assert_eq!(attrs.flavour, "install_only");
         assert_eq!(attrs.triple_suffix, Some("-pc-windows-msvc"));
     }
+
+    #[test]
+    fn current_returns_some_on_supported_host() {
+        let p = Platform::current();
+        // This test runs on CI (Linux x86_64, macOS arm64, Windows x86_64)
+        // so it must always resolve to a known platform.
+        assert!(p.is_some());
+    }
 }
