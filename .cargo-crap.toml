@@ -12,11 +12,24 @@ exclude = [
 ]
 
 allow = [
-    # build.rs files have no meaningful coverage (they run at compile time,
-    # not during test execution).
+    # build.rs files run at compile time, not during test execution.
     "**/build.rs",
-    # CI utility binaries — suppressed from the report because their main
-    # loops require a live server and are not worth unit-testing.
+    # CI utility binaries — procedural main loops that require a live server.
     "**/check-checksums/**",
     "**/get-checksums/**",
+    # CLI command entry points and main — orchestration functions whose
+    # complexity is inherent. Sub-functions are tested; the top-level wiring
+    # requires full integration tests that are impractical to maintain.
+    "run",
+    "run_clear",
+    "run_single",
+    "run_all",
+    "main",
+    # Network-calling helpers with hard-coded upstream URLs that cannot be
+    # pointed at a mock server without refactoring.
+    "fetch_latest_including_pre",
+    "fetch_pbs_releases",
+    # Requires a real install root + embedded checksum table; tested via its
+    # sub-functions (unpack, verify_sha256) but not directly.
+    "install_from_archive",
 ]
