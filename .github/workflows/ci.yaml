@@ -94,7 +94,7 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: CRAP analysis
-        run: cargo crap --workspace --lcov lcov.info --format github
+        run: cargo crap --workspace --lcov lcov.info --format github --fail-above
 
   # Build each workspace member in isolation so we catch feature-unification
   # leaks (e.g. a crate relying on features activated only because another
