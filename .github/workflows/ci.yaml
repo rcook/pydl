@@ -68,6 +68,34 @@ jobs:
       - name: Test
         run: cargo test --target ${{ matrix.target }}
 
+  # CRAP (Change Risk Anti-Patterns) analysis: emits inline warnings on the PR
+  # diff for functions that combine high cyclomatic complexity with low test
+  # coverage. Does not fail the build — informational only.
+  crap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crap
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-crap
+        run: cargo install cargo-crap
+
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: CRAP analysis
+        run: cargo crap --workspace --lcov lcov.info --format github
+
   # Build each workspace member in isolation so we catch feature-unification
   # leaks (e.g. a crate relying on features activated only because another
   # workspace member enables them). The workspace build above will happily

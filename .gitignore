@@ -2,3 +2,4 @@
 .pydl.json
 __pycache__/
 *.pyc
+lcov.info

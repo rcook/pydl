@@ -18,6 +18,7 @@ Commands:
   pydl [args...]             cargo run -p pydl --quiet -- [args...]
   get-checksums [args...]    cargo run -p get-checksums -- [args...]
   check-checksums [args...]  cargo run -p check-checksums -- [args...]
+  crap [args...]           generate coverage + run cargo-crap [args...]
   install-pydl               build pydl in release mode and copy it to ~/.local/bin
   clean                      cargo clean
   help                       show this help
@@ -63,6 +64,10 @@ case "$cmd" in
         ;;
     check-checksums)
         "$CARGO" run -p check-checksums -- "$@"
+        ;;
+    crap)
+        cargo llvm-cov --workspace --lcov --output-path lcov.info
+        cargo crap --workspace --lcov lcov.info "$@"
         ;;
     install-pydl)
         "$CARGO" build -p pydl --release

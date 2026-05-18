@@ -1,0 +1,22 @@
+# cargo-crap configuration
+# https://minikin.me/blog/cargo-crap
+
+threshold = 30
+
+# CI utility binaries — procedural main loops that require a live server to
+# test meaningfully. Their logic is inherently orchestrational and not worth
+# unit-testing at the function level.
+exclude = [
+    "check-checksums/**",
+    "get-checksums/**",
+]
+
+allow = [
+    # build.rs files have no meaningful coverage (they run at compile time,
+    # not during test execution).
+    "**/build.rs",
+    # CI utility binaries — suppressed from the report because their main
+    # loops require a live server and are not worth unit-testing.
+    "**/check-checksums/**",
+    "**/get-checksums/**",
+]
