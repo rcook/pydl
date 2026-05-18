@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.19] - 2026-05-18
+
+
+### Bug Fixes
+- Fix formatting (4e420e7)
+
+
+### Features
+- Add more test coverage (25efdfd)
+
+
+### Internal
+- Analyse complexity (e89fd40)
+- Enforce CRAP threshold (80e7137)
+- Exclude functions (073467c)
+
 ## [0.1.18] - 2026-05-18
 
 
