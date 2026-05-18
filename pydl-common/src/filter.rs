@@ -1377,7 +1377,10 @@ mod tests {
             platform: None,
             default_attrs: None,
         };
-        assert!(!name_matches_filters("not-a-valid-asset-name.tar.gz", filters));
+        assert!(!name_matches_filters(
+            "not-a-valid-asset-name.tar.gz",
+            filters
+        ));
     }
 
     #[test]

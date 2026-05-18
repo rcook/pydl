@@ -793,8 +793,8 @@ mod tests {
             zip.finish().unwrap();
         }
 
-        let err = extract_from_zip(&archive_path, dir.path())
-            .expect_err("missing pydl.exe must error");
+        let err =
+            extract_from_zip(&archive_path, dir.path()).expect_err("missing pydl.exe must error");
         let msg = format!("{err:#}");
         assert!(msg.contains("no `pydl.exe` binary"), "got: {msg}");
     }

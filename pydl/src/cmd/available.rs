@@ -310,9 +310,8 @@ mod tests {
             .unwrap();
 
         // Re-prime the cache with the canonical URL format asset_status uses.
-        let canonical_url = format!(
-            "https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}"
-        );
+        let canonical_url =
+            format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{asset_name}");
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(b"data"))
             .mount(&server)
