@@ -43,21 +43,21 @@ pub async fn run(args: Args) -> Result<()> {
     debug!("cache min-freshness floor: {min_freshness}s");
     let client = make_client(crate::USER_AGENT, min_freshness)?;
 
-    eprintln!("fetching python-build-standalone releases...");
+    debug!("fetching python-build-standalone releases...");
     let releases = fetch_pbs_releases(&client, args.full).await?;
     snapshot::write_pbs_releases(&releases)
         .with_context(|| "writing pbs-releases snapshot".to_owned())?;
-    eprintln!(
+    println!(
         "snapshot: pbs-releases ({} releases) -> {}",
         releases.len(),
         snapshot::pbs_releases_path()?.display()
     );
 
-    eprintln!("fetching latest pydl release...");
+    debug!("fetching latest pydl release...");
     let pydl_latest = fetch_latest_pydl_stable(&client).await?;
     snapshot::write_pydl_latest(&pydl_latest)
         .with_context(|| "writing pydl-latest snapshot".to_owned())?;
-    eprintln!(
+    println!(
         "snapshot: pydl-latest ({}) -> {}",
         pydl_latest.tag_name,
         snapshot::pydl_latest_path()?.display()
