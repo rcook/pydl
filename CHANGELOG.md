@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.18] - 2026-05-18
+
+
+### Bug Fixes
+- Fix #12: Clean up primary output and logging for various commands (bb0ea46)
+
 ## [0.1.17] - 2026-05-17
 
 
