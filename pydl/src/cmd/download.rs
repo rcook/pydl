@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use futures_util::StreamExt;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use pydl_cache::{CacheOutcome, CachingClient, StatusCode};
 use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
@@ -55,13 +55,22 @@ pub async fn run(args: Args) -> Result<()> {
     let size = humanize_bytes(total);
     match outcome {
         CacheOutcome::Hit | CacheOutcome::Revalidated => {
-            println!("already cached: {asset_name} ({size})");
+            println!(
+                "already cached: {asset_name} ({size}) at {}",
+                body_path.display()
+            );
         }
         CacheOutcome::Downloaded => {
-            println!("downloaded {asset_name} ({size})");
+            println!(
+                "downloaded {asset_name} ({size}) to {}",
+                body_path.display()
+            );
         }
         CacheOutcome::StaleIfError => {
-            println!("served from cache (upstream error): {asset_name} ({size})");
+            println!(
+                "served from cache (upstream error): {asset_name} ({size}) at {}",
+                body_path.display()
+            );
         }
     }
 
@@ -75,7 +84,7 @@ pub async fn run(args: Args) -> Result<()> {
         fs::copy(&body_path, &out_path).await.with_context(|| {
             format!("copying {} -> {}", body_path.display(), out_path.display())
         })?;
-        info!("wrote {} ({total} bytes)", out_path.display());
+        println!("copied {asset_name} ({size}) to {}", out_path.display());
     }
 
     Ok(())

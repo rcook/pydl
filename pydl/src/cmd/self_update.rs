@@ -169,14 +169,14 @@ pub async fn run(args: Args) -> Result<()> {
         .unwrap_or(&release.tag_name);
     let latest = Version::parse(latest_str)
         .with_context(|| format!("parsing release tag {:?} as semver", release.tag_name))?;
-    info!(
+    debug!(
         "latest release on GitHub: {} (running {current})",
         release.tag_name
     );
 
     if !args.force {
         if latest == current {
-            info!(
+            println!(
                 "pydl {current} is already the latest{}",
                 if args.pre {
                     " (including pre-releases)"
@@ -187,7 +187,7 @@ pub async fn run(args: Args) -> Result<()> {
             return Ok(());
         }
         if latest < current {
-            info!(
+            println!(
                 "running pydl {current} is newer than the latest published release ({latest}); use --force to downgrade"
             );
             return Ok(());
@@ -203,7 +203,7 @@ pub async fn run(args: Args) -> Result<()> {
     let url = &asset.browser_download_url;
 
     if args.dry_run {
-        info!("dry run: would download {} from {url}", asset.name);
+        println!("dry run: would download {} from {url}", asset.name);
         return Ok(());
     }
 
@@ -245,7 +245,7 @@ pub async fn run(args: Args) -> Result<()> {
 
     drop(staging);
 
-    info!("pydl updated: {current} -> {latest}");
+    println!("pydl updated: {current} -> {latest}");
     Ok(())
 }
 

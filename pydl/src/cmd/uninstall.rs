@@ -20,7 +20,7 @@ use std::{fs, io};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use log::info;
+use pydl_common::checksums;
 use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
     pick_single_embedded,
@@ -79,7 +79,7 @@ fn run_single(filter: FilterArgs, confirmed: bool) -> Result<()> {
     let staging = staging_dirs_for_hash(&root, &hash)?;
 
     if !confirmed {
-        println!("would remove {}", final_dir.display());
+        println!("would remove {asset_name} at {}", final_dir.display());
         for s in &staging {
             println!("would remove {}", s.display());
         }
@@ -87,10 +87,10 @@ fn run_single(filter: FilterArgs, confirmed: bool) -> Result<()> {
     }
 
     remove_path(&final_dir)?;
-    info!("removed {}", final_dir.display());
+    println!("removed {asset_name} at {}", final_dir.display());
     for s in &staging {
         remove_path(s)?;
-        info!("removed staging {}", s.display());
+        println!("removed {}", s.display());
     }
     Ok(())
 }
@@ -100,22 +100,30 @@ fn run_all(confirmed: bool) -> Result<()> {
     let hash_dirs = hash_shaped_children(&root)?;
 
     if hash_dirs.is_empty() {
-        info!("no installed assets under {}", root.display());
+        println!("no installed assets under {}", root.display());
         return Ok(());
     }
 
     if !confirmed {
         for dir in &hash_dirs {
-            println!("would remove {}", dir.display());
+            println!("would remove {}", format_asset_dir(dir));
         }
         std::process::exit(2);
     }
 
     for dir in &hash_dirs {
         remove_path(dir)?;
-        info!("removed {}", dir.display());
+        println!("removed {}", format_asset_dir(dir));
     }
     Ok(())
+}
+
+fn format_asset_dir(dir: &Path) -> String {
+    let hash = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    checksums::asset_name_for_install_hash(hash).map_or_else(
+        || format!("{}", dir.display()),
+        |name| format!("{name} at {}", dir.display()),
+    )
 }
 
 /// Lowercase hex SHA-256 (the install-dir naming convention).

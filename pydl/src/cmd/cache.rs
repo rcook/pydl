@@ -9,7 +9,6 @@ use std::{fs, io};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use log::info;
 use pydl_common::cache_dir;
 
 #[derive(Parser, Debug)]
@@ -64,7 +63,7 @@ fn run_clear(confirmed: bool) -> Result<()> {
     }
 
     if entries == 0 {
-        info!("cache at {} is already empty", dir.display());
+        println!("cache is already empty");
         return Ok(());
     }
 
@@ -85,10 +84,7 @@ fn run_clear(confirmed: bool) -> Result<()> {
             fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
         }
     }
-    info!(
-        "cleared {entries} entries ({bytes} bytes) from {}",
-        dir.display()
-    );
+    println!("cleared {entries} entries ({bytes} bytes)");
     Ok(())
 }
 

@@ -43,30 +43,27 @@ pub async fn run(args: Args) -> Result<()> {
     debug!("cache min-freshness floor: {min_freshness}s");
     let client = make_client(crate::USER_AGENT, min_freshness)?;
 
-    info!("fetching python-build-standalone releases...");
+    eprintln!("fetching python-build-standalone releases...");
     let releases = fetch_pbs_releases(&client, args.full).await?;
     snapshot::write_pbs_releases(&releases)
         .with_context(|| "writing pbs-releases snapshot".to_owned())?;
-    info!(
+    eprintln!(
         "snapshot: pbs-releases ({} releases) -> {}",
         releases.len(),
         snapshot::pbs_releases_path()?.display()
     );
 
-    info!("fetching latest pydl release...");
+    eprintln!("fetching latest pydl release...");
     let pydl_latest = fetch_latest_pydl_stable(&client).await?;
     snapshot::write_pydl_latest(&pydl_latest)
         .with_context(|| "writing pydl-latest snapshot".to_owned())?;
-    info!(
+    eprintln!(
         "snapshot: pydl-latest ({}) -> {}",
         pydl_latest.tag_name,
         snapshot::pydl_latest_path()?.display()
     );
 
-    // Trailer: print exactly what `pydl available` will print after this
-    // run, so the user sees the same wording from producer and consumer.
-    info!("");
-    info!(
+    println!(
         "{}",
         snapshot::format_python_releases_short_summary(&releases)
     );
@@ -95,7 +92,7 @@ fn emit_pydl_trailer(release: &PydlRelease) {
         );
         return;
     };
-    info!("{}", snapshot::format_pydl_version_line(&running, &latest));
+    println!("{}", snapshot::format_pydl_version_line(&running, &latest));
 }
 
 /// Fetch PBS releases: incremental when a valid snapshot exists, full otherwise.

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use log::{debug, info};
+use log::debug;
 use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
     pick_single_embedded,
@@ -45,14 +45,12 @@ pub fn run(args: Args) -> Result<()> {
     let installation = install_from_archive(&archive_path, tag, asset_name)
         .with_context(|| format!("installing {asset_name} from {}", archive_path.display()))?;
     if installation.already_present {
-        info!(
-            "{asset_name} is already installed at {}",
+        println!(
+            "already installed: {asset_name} at {}",
             installation.dir.display()
         );
+    } else {
+        println!("installed {asset_name} at {}", installation.dir.display());
     }
-    // Print the install dir on stdout so callers can capture it:
-    //   path=$(pydl install -t ... -v ...)
-    // Logs go to stderr; this line is the "answer."
-    println!("{}", installation.dir.display());
     Ok(())
 }
