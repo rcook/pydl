@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.23] - 2026-05-19
+
+
+### Internal
+- Clean up output (b4360ab)
+
 ## [0.1.22] - 2026-05-19
 
 
