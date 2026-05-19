@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.22] - 2026-05-19
+
+
+### Internal
+- Change freshness (98dc0d9)
+
+
+### Tooling
+- Fix Clippy issues (7748ae4)
+
 ## [0.1.21] - 2026-05-19
 
 
