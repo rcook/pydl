@@ -24,7 +24,7 @@ use log::{debug, warn};
 use pydl_cache::{CachingClient, Method, StatusCode};
 use pydl_common::filter::Release;
 use pydl_common::snapshot::{self, PydlRelease};
-use pydl_common::{PER_PAGE, fetch_releases_page, make_client, min_freshness_secs};
+use pydl_common::{PER_PAGE, fetch_releases_page, make_client};
 use semver::Version;
 
 use crate::progress::{self, ProgressMode};
@@ -41,9 +41,7 @@ pub struct Args {
 
 #[allow(clippy::needless_pass_by_value)]
 pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
-    let min_freshness = min_freshness_secs()?;
-    debug!("cache min-freshness floor: {min_freshness}s");
-    let client = make_client(crate::USER_AGENT, min_freshness)?;
+    let client = make_client(crate::USER_AGENT, 0)?;
 
     let pb = progress::spinner(progress_mode, "fetching releases...");
     let releases = fetch_pbs_releases(&client, args.full, &pb).await?;
