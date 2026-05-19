@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "pydl"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "anyhow",
  "clap",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "pydl-cache"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "pydl-common"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "anyhow",
  "clap",
