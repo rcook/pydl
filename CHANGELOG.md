@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.20] - 2026-05-19
+
+
+### Bug Fixes
+- Fix #13: Add progress to long-running commands (c2d76df)
+
+
+### Internal
+- Clean up stdout from pydl update (da498c4)
+
 ## [0.1.19] - 2026-05-18
 
 
