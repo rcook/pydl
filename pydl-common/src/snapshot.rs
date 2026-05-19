@@ -146,35 +146,22 @@ fn read_envelope<T: DeserializeOwned>(path: &Path) -> Result<Option<Envelope<T>>
     Ok(Some(envelope))
 }
 
-/// Format a duration in seconds into a short human-readable phrase. The
-/// buckets match what users intuitively reach for when scanning a CLI line.
 #[must_use]
 pub fn humanize_age(now: u64, fetched_at: u64) -> String {
     let secs = now.saturating_sub(fetched_at);
-    if secs < 60 {
+    let (value, unit) = if secs < 60 {
         return "just now".to_owned();
-    }
-    if secs < 60 * 60 {
-        let mins = secs / 60;
-        return if mins == 1 {
-            "1 minute ago".to_owned()
-        } else {
-            format!("{mins} minutes ago")
-        };
-    }
-    if secs < 24 * 60 * 60 {
-        let hours = secs / (60 * 60);
-        return if hours == 1 {
-            "1 hour ago".to_owned()
-        } else {
-            format!("{hours} hours ago")
-        };
-    }
-    let days = secs / (24 * 60 * 60);
-    if days == 1 {
-        "1 day ago".to_owned()
+    } else if secs < 3_600 {
+        (secs / 60, "minute")
+    } else if secs < 86_400 {
+        (secs / 3_600, "hour")
     } else {
-        format!("{days} days ago")
+        (secs / 86_400, "day")
+    };
+    if value == 1 {
+        format!("1 {unit} ago")
+    } else {
+        format!("{value} {unit}s ago")
     }
 }
 

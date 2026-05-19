@@ -31,6 +31,16 @@ pub fn asset_hash(name: &str) -> String {
     checksums::hex_digest(h)
 }
 
+/// Whether `name` is a 64-char lowercase hex string (the install-dir naming
+/// convention produced by [`asset_hash`]).
+#[must_use]
+pub fn is_install_hash(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
 /// Root install directory — `$HOME/.pydl/asset/`.
 pub fn install_root() -> Result<PathBuf> {
     Ok(pydl_root()?.join("asset"))
@@ -169,35 +179,18 @@ fn verify_sha256(archive_path: &Path, expected_hex: &str, asset_name: &str) -> R
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Compression {
-    Gzip,
-    Zstd,
-}
-
-fn classify(asset_name: &str) -> Result<Compression> {
-    if asset_name.ends_with(".tar.gz") {
-        Ok(Compression::Gzip)
-    } else if asset_name.ends_with(".tar.zst") {
-        Ok(Compression::Zstd)
-    } else {
-        bail!("unsupported archive extension for {asset_name:?}");
-    }
-}
-
 fn unpack(archive_path: &Path, asset_name: &str, dest_dir: &Path) -> Result<()> {
-    let compression = classify(asset_name)?;
     let file = fs::File::open(archive_path)
         .with_context(|| format!("opening {}", archive_path.display()))?;
     let reader = BufReader::new(file);
-    match compression {
-        Compression::Gzip => unpack_tar(flate2::read::GzDecoder::new(reader), dest_dir),
-        Compression::Zstd => {
-            let zst = zstd::Decoder::new(reader).with_context(|| {
-                format!("initializing zstd decoder for {}", archive_path.display())
-            })?;
-            unpack_tar(zst, dest_dir)
-        }
+    if asset_name.ends_with(".tar.gz") {
+        unpack_tar(flate2::read::GzDecoder::new(reader), dest_dir)
+    } else if asset_name.ends_with(".tar.zst") {
+        let zst = zstd::Decoder::new(reader)
+            .with_context(|| format!("initializing zstd decoder for {}", archive_path.display()))?;
+        unpack_tar(zst, dest_dir)
+    } else {
+        bail!("unsupported archive extension for {asset_name:?}");
     }
 }
 
@@ -244,6 +237,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn is_install_hash_accepts_64_lowercase_hex() {
+        assert!(is_install_hash(&"a".repeat(64)));
+        assert!(is_install_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn is_install_hash_rejects_wrong_length() {
+        assert!(!is_install_hash(""));
+        assert!(!is_install_hash("abc"));
+        assert!(!is_install_hash(&"a".repeat(63)));
+        assert!(!is_install_hash(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn is_install_hash_rejects_uppercase() {
+        assert!(!is_install_hash(&"A".repeat(64)));
+    }
+
+    #[test]
+    fn is_install_hash_rejects_non_hex_chars() {
+        let mut bad = String::from("z");
+        bad.push_str(&"a".repeat(63));
+        assert!(!is_install_hash(&bad));
+    }
+
+    #[test]
+    fn is_install_hash_rejects_staging_dir_suffix() {
+        let staging = format!("{}.abcdef", "a".repeat(64));
+        assert!(!is_install_hash(&staging));
+    }
+
+    #[test]
     fn asset_hash_is_deterministic() {
         let a = asset_hash("cpython-3.14.4+20260414-aarch64-apple-darwin-install_only.tar.gz");
         let b = asset_hash("cpython-3.14.4+20260414-aarch64-apple-darwin-install_only.tar.gz");
@@ -259,14 +286,13 @@ mod tests {
     }
 
     #[test]
-    fn classify_known_extensions() {
-        assert_eq!(classify("foo.tar.gz").unwrap(), Compression::Gzip);
-        assert_eq!(classify("foo.tar.zst").unwrap(), Compression::Zstd);
-    }
-
-    #[test]
-    fn classify_rejects_unknown_extension() {
-        let err = classify("something.zip").unwrap_err();
+    fn unpack_rejects_unknown_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive_path = tmp.path().join("something.zip");
+        fs::write(&archive_path, b"fake").unwrap();
+        let dest = tmp.path().join("out");
+        fs::create_dir_all(&dest).unwrap();
+        let err = unpack(&archive_path, "something.zip", &dest).unwrap_err();
         assert!(
             err.to_string().contains("unsupported archive extension"),
             "got: {err}"

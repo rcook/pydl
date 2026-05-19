@@ -25,7 +25,7 @@ use pydl_common::filter::{
     FilterArgs, apply_config_defaults, auto_select_tag_embedded, filter_embedded,
     pick_single_embedded,
 };
-use pydl_common::install::{asset_hash, install_root};
+use pydl_common::install::{asset_hash, install_root, is_install_hash};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -126,17 +126,7 @@ fn format_asset_dir(dir: &Path) -> String {
     )
 }
 
-/// Lowercase hex SHA-256 (the install-dir naming convention).
-fn is_install_hash(name: &str) -> bool {
-    name.len() == 64
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-}
-
-/// Collect every direct child of `root` whose name is a 64-char lowercase
-/// hex string. Staging-dir siblings (`<hash>.xxxxxx`) are excluded.
-fn hash_shaped_children(root: &Path) -> Result<Vec<PathBuf>> {
+fn collect_dir_entries(root: &Path, pred: impl Fn(&str) -> bool) -> Result<Vec<PathBuf>> {
     let read = match fs::read_dir(root) {
         Ok(r) => r,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -148,37 +138,21 @@ fn hash_shaped_children(root: &Path) -> Result<Vec<PathBuf>> {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if !is_install_hash(&name) {
-            continue;
-        }
-        out.push(entry.path());
-    }
-    out.sort();
-    Ok(out)
-}
-
-/// Collect any `<hash>.<suffix>` staging directories at `root`. Used after
-/// resolving a specific install's hash so a crash-interrupted install's
-/// leftovers are cleaned up alongside the real install.
-fn staging_dirs_for_hash(root: &Path, hash: &str) -> Result<Vec<PathBuf>> {
-    let read = match fs::read_dir(root) {
-        Ok(r) => r,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", root.display())),
-    };
-    let prefix = format!("{hash}.");
-    let mut out = Vec::new();
-    for entry in read {
-        let entry = entry.with_context(|| format!("iterating {}", root.display()))?;
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if name.starts_with(&prefix) {
+        if pred(&name) {
             out.push(entry.path());
         }
     }
     out.sort();
     Ok(out)
+}
+
+fn hash_shaped_children(root: &Path) -> Result<Vec<PathBuf>> {
+    collect_dir_entries(root, is_install_hash)
+}
+
+fn staging_dirs_for_hash(root: &Path, hash: &str) -> Result<Vec<PathBuf>> {
+    let prefix = format!("{hash}.");
+    collect_dir_entries(root, |name| name.starts_with(&prefix))
 }
 
 fn remove_path(path: &Path) -> Result<()> {
@@ -193,18 +167,6 @@ fn remove_path(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_install_hash_accepts_64_lowercase_hex() {
-        assert!(is_install_hash(&"a".repeat(64)));
-    }
-
-    #[test]
-    fn is_install_hash_rejects_uppercase_and_wrong_length() {
-        assert!(!is_install_hash(&"A".repeat(64)));
-        assert!(!is_install_hash(&"a".repeat(63)));
-        assert!(!is_install_hash("not-a-hash"));
-    }
 
     #[test]
     fn hash_shaped_children_filters_staging_and_non_hash() {

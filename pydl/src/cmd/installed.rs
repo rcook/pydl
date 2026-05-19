@@ -6,23 +6,13 @@ use clap::Parser;
 use log::debug;
 use pydl_common::asset::ParsedAsset;
 use pydl_common::filter::FilterArgs;
+use pydl_common::install::is_install_hash;
 use pydl_common::{checksums, pydl_root};
 
 #[derive(Parser, Debug)]
 pub struct Args {
     #[command(flatten)]
     pub filter: FilterArgs,
-}
-
-/// The install-dir hash is a fixed-length lowercase hex SHA-256. We only
-/// consider entries that match exactly so staging dirs (`<hash>.xxxxxx`)
-/// and any unrelated leftovers are ignored.
-#[must_use]
-fn is_install_hash(name: &str) -> bool {
-    name.len() == 64
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// One row in the output listing.
@@ -138,45 +128,6 @@ fn matches_filter(listing: &Listing, filter: &FilterArgs) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_install_hash_accepts_64_lowercase_hex() {
-        assert!(is_install_hash(&"a".repeat(64)));
-        assert!(is_install_hash(
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        ));
-    }
-
-    #[test]
-    fn is_install_hash_rejects_wrong_length() {
-        assert!(!is_install_hash(""));
-        assert!(!is_install_hash("abc"));
-        assert!(!is_install_hash(&"a".repeat(63)));
-        assert!(!is_install_hash(&"a".repeat(65)));
-    }
-
-    #[test]
-    fn is_install_hash_rejects_uppercase() {
-        // Our install hashes are always written lowercase by `hex_digest`.
-        // Rejecting uppercase prevents weird filesystems from accidentally
-        // matching two distinct dir names as "the same" install.
-        assert!(!is_install_hash(&"A".repeat(64)));
-    }
-
-    #[test]
-    fn is_install_hash_rejects_non_hex_chars() {
-        let mut bad = String::from("z");
-        bad.push_str(&"a".repeat(63));
-        assert!(!is_install_hash(&bad));
-    }
-
-    #[test]
-    fn is_install_hash_rejects_staging_dir_suffix() {
-        // The install flow creates staging dirs as `<hash>.<suffix>`. The dot
-        // is the marker that disqualifies them.
-        let staging = format!("{}.abcdef", "a".repeat(64));
-        assert!(!is_install_hash(&staging));
-    }
 
     #[test]
     fn collect_installed_returns_empty_when_root_missing() {

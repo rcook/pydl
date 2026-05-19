@@ -28,14 +28,16 @@ fn table() -> &'static Table {
     })
 }
 
-/// Parse one `.sha256sums` file body into a `{filename → hash}` map.
-/// Lines that don't match `<hex>  <name>` are silently ignored (empty lines,
-/// comments, etc.).
-fn parse_sha256sums(body: &'static str) -> HashMap<&'static str, &'static str> {
+fn parse_sha256sums_inner<'a, N, H>(
+    body: &'a str,
+    make_name: impl Fn(&'a str) -> N,
+    make_hash: impl Fn(&'a str) -> H,
+) -> HashMap<N, H>
+where
+    N: Eq + std::hash::Hash,
+{
     let mut map = HashMap::new();
     for line in body.lines() {
-        // Canonical format is `<64-hex-chars><space><space><filename>`.
-        // Be permissive: accept any non-empty whitespace between the two.
         let trimmed = line.trim_start();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -45,10 +47,14 @@ fn parse_sha256sums(body: &'static str) -> HashMap<&'static str, &'static str> {
         let Some(rest) = parts.next() else { continue };
         let name = rest.trim_start();
         if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) && !name.is_empty() {
-            map.insert(name, hash);
+            map.insert(make_name(name), make_hash(hash));
         }
     }
     map
+}
+
+fn parse_sha256sums(body: &'static str) -> HashMap<&'static str, &'static str> {
+    parse_sha256sums_inner(body, |n| n, |h| h)
 }
 
 /// Owned-string variant of [`parse_sha256sums`] for runtime-fetched manifests
@@ -56,21 +62,7 @@ fn parse_sha256sums(body: &'static str) -> HashMap<&'static str, &'static str> {
 /// permissive parsing rules as the build-time version.
 #[must_use]
 pub fn parse_sha256sums_owned(body: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let Some(hash) = parts.next() else { continue };
-        let Some(rest) = parts.next() else { continue };
-        let name = rest.trim_start();
-        if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) && !name.is_empty() {
-            map.insert(name.to_owned(), hash.to_ascii_lowercase());
-        }
-    }
-    map
+    parse_sha256sums_inner(body, str::to_owned, str::to_ascii_lowercase)
 }
 
 /// Stream `path` through SHA-256 and return the digest as lowercase hex.
