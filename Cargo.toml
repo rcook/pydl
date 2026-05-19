@@ -10,7 +10,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.1.22"
+version = "0.1.23"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

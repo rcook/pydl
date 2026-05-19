@@ -170,7 +170,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "check-checksums"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "clap",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "get-checksums"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "clap",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "pydl"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "clap",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "pydl-cache"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "pydl-common"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "clap",
