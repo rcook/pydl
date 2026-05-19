@@ -339,4 +339,26 @@ mod tests {
             "attempt 2 jitter out of band: {a2}"
         );
     }
+
+    // ----- min_freshness_secs -----
+
+    #[test]
+    fn min_freshness_secs_returns_value() {
+        // Just verify it succeeds (either env-based or default). We can't
+        // safely set/unset env vars in tests with unsafe_code = "forbid".
+        let result = min_freshness_secs().unwrap();
+        assert!(result > 0);
+    }
+
+    // ----- pydl_root -----
+
+    #[test]
+    fn pydl_root_succeeds_and_ends_with_pydl() {
+        let root = pydl_root().unwrap();
+        assert!(
+            root.ends_with(".pydl"),
+            "pydl_root should end with .pydl, got: {}",
+            root.display()
+        );
+    }
 }

@@ -848,4 +848,62 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("no `pydl.exe` binary"), "got: {msg}");
     }
+
+    // ----- pick_asset -----
+
+    #[test]
+    fn pick_asset_finds_matching_tar_gz() {
+        let release = Release {
+            tag_name: "v0.1.5".to_owned(),
+            assets: vec![
+                ReleaseAsset {
+                    name: "pydl-v0.1.5-aarch64-apple-darwin.tar.gz".to_owned(),
+                    browser_download_url: "https://example.test/a".to_owned(),
+                },
+                ReleaseAsset {
+                    name: "pydl-v0.1.5-x86_64-unknown-linux-musl.tar.gz".to_owned(),
+                    browser_download_url: "https://example.test/b".to_owned(),
+                },
+                ReleaseAsset {
+                    name: "SHA256SUMS".to_owned(),
+                    browser_download_url: "https://example.test/c".to_owned(),
+                },
+            ],
+        };
+        let asset = pick_asset(&release, "x86_64-unknown-linux-musl", ArchiveKind::TarGz).unwrap();
+        assert_eq!(asset.name, "pydl-v0.1.5-x86_64-unknown-linux-musl.tar.gz");
+    }
+
+    #[test]
+    fn pick_asset_finds_matching_zip() {
+        let release = Release {
+            tag_name: "v0.1.5".to_owned(),
+            assets: vec![ReleaseAsset {
+                name: "pydl-v0.1.5-x86_64-pc-windows-msvc.zip".to_owned(),
+                browser_download_url: "https://example.test/w".to_owned(),
+            }],
+        };
+        let asset = pick_asset(&release, "x86_64-pc-windows-msvc", ArchiveKind::Zip).unwrap();
+        assert_eq!(asset.name, "pydl-v0.1.5-x86_64-pc-windows-msvc.zip");
+    }
+
+    #[test]
+    fn pick_asset_errors_when_no_match() {
+        let release = Release {
+            tag_name: "v0.1.5".to_owned(),
+            assets: vec![ReleaseAsset {
+                name: "pydl-v0.1.5-aarch64-apple-darwin.tar.gz".to_owned(),
+                browser_download_url: "https://example.test/a".to_owned(),
+            }],
+        };
+        let err =
+            pick_asset(&release, "x86_64-unknown-linux-musl", ArchiveKind::TarGz).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no asset named"), "got: {msg}");
+        assert!(msg.contains("Candidates:"), "got: {msg}");
+        assert!(
+            msg.contains("aarch64-apple-darwin"),
+            "should list available assets, got: {msg}"
+        );
+    }
 }

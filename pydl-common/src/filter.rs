@@ -1464,4 +1464,140 @@ mod tests {
             filters,
         ));
     }
+
+    // ----- pick_single_embedded -----
+
+    #[test]
+    fn pick_single_embedded_empty_errors() {
+        let err = pick_single_embedded(&[]).unwrap_err();
+        assert!(
+            err.to_string().contains("no embedded assets matched"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn pick_single_embedded_single_returns_it() {
+        let hits = vec![(
+            "20260414",
+            "cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        )];
+        let (tag, name) = pick_single_embedded(&hits).unwrap();
+        assert_eq!(tag, "20260414");
+        assert_eq!(
+            name,
+            "cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz"
+        );
+    }
+
+    #[test]
+    fn pick_single_embedded_multiple_errors_with_candidates() {
+        let hits = vec![
+            ("20260414", "asset-a.tar.gz"),
+            ("20260414", "asset-b.tar.gz"),
+        ];
+        let err = pick_single_embedded(&hits).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("2 assets matched"), "got: {msg}");
+        assert!(msg.contains("asset-a.tar.gz"), "got: {msg}");
+        assert!(msg.contains("asset-b.tar.gz"), "got: {msg}");
+    }
+
+    // ----- filter_embedded -----
+
+    #[test]
+    fn filter_embedded_with_no_filters_returns_all() {
+        let args = FilterArgs {
+            tag: None,
+            version: None,
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        let hits = filter_embedded(&args).unwrap();
+        assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn filter_embedded_bad_tag_errors() {
+        let args = FilterArgs {
+            tag: Some("definitely_not_a_tag".to_owned()),
+            version: None,
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        let err = filter_embedded(&args).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("isn't in the embedded checksum set"),
+            "got: {err}"
+        );
+    }
+
+    // ----- auto_select_tag_embedded -----
+
+    #[test]
+    fn auto_select_tag_embedded_noop_when_tag_set() {
+        let mut args = FilterArgs {
+            tag: Some("20260414".to_owned()),
+            version: Some("3.14.4".to_owned()),
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        auto_select_tag_embedded(&mut args).unwrap();
+        assert_eq!(args.tag.as_deref(), Some("20260414"));
+    }
+
+    #[test]
+    fn auto_select_tag_embedded_noop_when_no_version() {
+        let mut args = FilterArgs {
+            tag: None,
+            version: None,
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        auto_select_tag_embedded(&mut args).unwrap();
+        assert!(args.tag.is_none());
+    }
+
+    #[test]
+    fn auto_select_tag_embedded_picks_newest_tag_for_version() {
+        let (_, sample_name) = crate::checksums::iter_embedded_assets().next().unwrap();
+        let parsed = crate::asset::ParsedAsset::parse(sample_name).unwrap();
+        let mut args = FilterArgs {
+            tag: None,
+            version: Some(parsed.version.to_owned()),
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        auto_select_tag_embedded(&mut args).unwrap();
+        assert!(args.tag.is_some(), "tag should have been auto-selected");
+    }
+
+    #[test]
+    fn auto_select_tag_embedded_errors_on_nonexistent_version() {
+        let mut args = FilterArgs {
+            tag: None,
+            version: Some("99.99.99".to_owned()),
+            platform: false,
+            no_platform: true,
+            default_attrs: false,
+            no_default_attrs: true,
+        };
+        let err = auto_select_tag_embedded(&mut args).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no embedded release carries version"),
+            "got: {err}"
+        );
+    }
 }

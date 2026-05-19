@@ -442,4 +442,27 @@ mod tests {
         // asset (charlie), confirming release order is unchanged.
         assert!(i_beta < i_charlie, "got: {msg}");
     }
+
+    // ----- verify_sha256 -----
+
+    #[test]
+    fn verify_sha256_passes_on_correct_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("data.bin");
+        fs::write(&path, b"known content").unwrap();
+        let expected = checksums::sha256_file(&path).unwrap();
+        verify_sha256(&path, &expected, "data.bin").expect("matching hash must pass");
+    }
+
+    #[test]
+    fn verify_sha256_fails_on_wrong_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("data.bin");
+        fs::write(&path, b"known content").unwrap();
+        let bogus = "0".repeat(64);
+        let err = verify_sha256(&path, &bogus, "data.bin").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sha256 mismatch"), "got: {msg}");
+        assert!(msg.contains("data.bin"), "got: {msg}");
+    }
 }

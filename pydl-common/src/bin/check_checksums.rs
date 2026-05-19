@@ -44,6 +44,7 @@ struct Cli {
     log: Option<String>,
 }
 
+#[derive(Debug)]
 enum CheckError {
     /// Non-OK HTTP status; caller may treat this as a soft warning rather
     /// than a hard failure (old tags sometimes return 404 because upstream
@@ -213,5 +214,112 @@ async fn check_one_owned(
             Ok((tag, Outcome::FetchFailed(status)))
         }
         Err(CheckError::Other(e)) => Err(e).with_context(|| format!("checking tag {tag}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_tag_valid() {
+        let path = Path::new("/dir/20260414.sha256sums");
+        assert_eq!(extract_tag(path), Some("20260414".to_owned()));
+    }
+
+    #[test]
+    fn extract_tag_no_suffix() {
+        let path = Path::new("/dir/README.md");
+        assert_eq!(extract_tag(path), None);
+    }
+
+    #[test]
+    fn extract_tag_empty_tag() {
+        let path = Path::new("/dir/.sha256sums");
+        assert_eq!(extract_tag(path), None);
+    }
+
+    #[test]
+    fn extract_tag_complex_name() {
+        let path = Path::new("/some/path/v1.2.3-beta.sha256sums");
+        assert_eq!(extract_tag(path), Some("v1.2.3-beta".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn load_entries_reads_and_sorts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        tokio::fs::write(dir.join("20260414.sha256sums"), "contents-a")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("20260101.sha256sums"), "contents-b")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("README.md"), "not a checksum file")
+            .await
+            .unwrap();
+
+        let entries = load_entries(dir).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "20260101");
+        assert_eq!(entries[0].1, "contents-b");
+        assert_eq!(entries[1].0, "20260414");
+        assert_eq!(entries[1].1, "contents-a");
+    }
+
+    #[tokio::test]
+    async fn load_entries_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = load_entries(tmp.path()).await.unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_one_matching_body() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let server = wiremock::MockServer::start().await;
+
+        let body = "aaa111  file.tar.gz\n";
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/checksums", server.uri());
+        let result = check_one(&client, "tag", body, &url).await.unwrap();
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn check_one_mismatching_body() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("upstream\n"))
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/checksums", server.uri());
+        let result = check_one(&client, "tag", "local\n", &url).await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn check_one_non_200_returns_status_error() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = CachingClient::new(cache_dir.path()).unwrap();
+        let url = format!("{}/checksums", server.uri());
+        let err = check_one(&client, "tag", "body", &url).await.unwrap_err();
+        assert!(matches!(err, CheckError::Status(StatusCode::NOT_FOUND)));
     }
 }
