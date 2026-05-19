@@ -231,24 +231,9 @@ async fn resolve_target_release(
     current: &Version,
 ) -> Result<(Release, Version)> {
     let release = if args.online {
-        if args.pre {
-            fetch_latest_including_pre(client).await?
-        } else {
-            fetch_latest_stable(client).await?
-        }
+        fetch_online(client, args.pre).await?
     } else {
-        let envelope = snapshot::read_pydl_latest()?.ok_or_else(|| {
-            let p = snapshot::pydl_latest_path().map_or_else(
-                |_| "<snapshot path unavailable>".to_owned(),
-                |p| p.display().to_string(),
-            );
-            anyhow!(
-                "no pydl version snapshot found at {p}. Run `pydl update`, or \
-                 pass --online to check upstream directly."
-            )
-        })?;
-        println!("{}", snapshot::staleness_report(envelope.fetched_at));
-        envelope.payload
+        load_from_snapshot()?
     };
 
     let latest_str = release
@@ -263,6 +248,29 @@ async fn resolve_target_release(
     );
 
     Ok((release, latest))
+}
+
+async fn fetch_online(client: &CachingClient, pre: bool) -> Result<Release> {
+    if pre {
+        fetch_latest_including_pre(client).await
+    } else {
+        fetch_latest_stable(client).await
+    }
+}
+
+fn load_from_snapshot() -> Result<Release> {
+    let envelope = snapshot::read_pydl_latest()?.ok_or_else(|| {
+        let p = snapshot::pydl_latest_path().map_or_else(
+            |_| "<snapshot path unavailable>".to_owned(),
+            |p| p.display().to_string(),
+        );
+        anyhow!(
+            "no pydl version snapshot found at {p}. Run `pydl update`, or \
+             pass --online to check upstream directly."
+        )
+    })?;
+    println!("{}", snapshot::staleness_report(envelope.fetched_at));
+    Ok(envelope.payload)
 }
 
 async fn fetch_latest_stable(client: &CachingClient) -> Result<Release> {
