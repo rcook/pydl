@@ -207,7 +207,10 @@ impl CachingClient {
         Ok(())
     }
 
-    pub async fn get_stream(&self, url: &str) -> Result<(StatusCode, CacheOutcome, ByteStream)> {
+    pub async fn get_stream(
+        &self,
+        url: &str,
+    ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
         let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
         let canonical = Self::canonical_url(&parsed);
         let existing = self.load_entry(&canonical)?;
@@ -232,7 +235,13 @@ impl CachingClient {
                     "GET {url} -> HIT (status {status}, fresh for {ttl_remaining}s, body {})",
                     paths.body.display()
                 );
-                return Ok((status, CacheOutcome::Hit, open_stream(&paths.body).await?));
+                let len = file_len(&paths.body);
+                return Ok((
+                    status,
+                    CacheOutcome::Hit,
+                    len,
+                    open_stream(&paths.body).await?,
+                ));
             }
         }
 
@@ -280,9 +289,11 @@ impl CachingClient {
                 "GET {url} -> HIT (304 Not Modified, revalidated, body {})",
                 paths.body.display()
             );
+            let len = file_len(&paths.body);
             return Ok((
                 status,
                 CacheOutcome::Revalidated,
+                len,
                 open_stream(&paths.body).await?,
             ));
         }
@@ -297,15 +308,23 @@ impl CachingClient {
         }
 
         if parse_cache_control(&headers).no_store {
-            return Ok((status, CacheOutcome::Downloaded, passthrough_stream(resp)));
+            let content_length = resp.content_length();
+            return Ok((
+                status,
+                CacheOutcome::Downloaded,
+                content_length,
+                passthrough_stream(resp),
+            ));
         }
 
+        let content_length = resp.content_length();
         download_to_tmp(&paths, resp).await?;
         let meta = build_meta(status, &headers, now);
         Self::write_meta(&paths.meta, &meta)?;
         Ok((
             status,
             CacheOutcome::Downloaded,
+            content_length,
             open_stream(&paths.body).await?,
         ))
     }
@@ -318,7 +337,7 @@ impl CachingClient {
         now: u64,
         existing: Option<(EntryPaths, EntryMeta)>,
         resp: Response,
-    ) -> Result<(StatusCode, CacheOutcome, ByteStream)> {
+    ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
         if let Some(msg) = rate_limit_message(status, headers, now) {
             info!("GET {url} -> {msg}");
         }
@@ -330,16 +349,24 @@ impl CachingClient {
                 existing_paths.body.display()
             );
             let cached_status = StatusCode::from_u16(existing_meta.status)?;
+            let len = file_len(&existing_paths.body);
             return Ok((
                 cached_status,
                 CacheOutcome::StaleIfError,
+                len,
                 open_stream(&existing_paths.body).await?,
             ));
         }
         if existing.is_some() {
             warn!("GET {url} -> upstream returned {status}, not updating cache");
         }
-        Ok((status, CacheOutcome::Downloaded, passthrough_stream(resp)))
+        let content_length = resp.content_length();
+        Ok((
+            status,
+            CacheOutcome::Downloaded,
+            content_length,
+            passthrough_stream(resp),
+        ))
     }
 
     pub async fn request(&self, method: Method, url: &str) -> Result<(StatusCode, Vec<u8>)> {
@@ -352,7 +379,7 @@ impl CachingClient {
             return Ok((status, body));
         }
 
-        let (status, _outcome, stream) = self.get_stream(url).await?;
+        let (status, _outcome, _len, stream) = self.get_stream(url).await?;
         let body = collect_stream(stream).await?;
         Ok((status, body))
     }
@@ -364,6 +391,10 @@ async fn collect_stream(mut stream: ByteStream) -> Result<Vec<u8>> {
         buf.extend_from_slice(&chunk?);
     }
     Ok(buf)
+}
+
+fn file_len(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|m| m.len())
 }
 
 async fn open_stream(path: &Path) -> Result<ByteStream> {
@@ -1270,7 +1301,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, outcome, stream) = client.get_stream(&url).await.unwrap();
+        let (status, outcome, _len, stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(outcome, CacheOutcome::Downloaded);
         let collected = collect_stream(stream).await.unwrap();
@@ -1283,7 +1314,7 @@ mod tests {
         assert!(!paths.tmp_body().exists());
         assert_eq!(fs::read(&paths.body).unwrap(), b"hello tarball");
 
-        let (_, outcome2, stream2) = client.get_stream(&url).await.unwrap();
+        let (_, outcome2, _len2, stream2) = client.get_stream(&url).await.unwrap();
         assert_eq!(outcome2, CacheOutcome::Hit);
         let collected2 = collect_stream(stream2).await.unwrap();
         assert_eq!(collected2, b"hello tarball");
@@ -1320,12 +1351,12 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         // Cold run populates the cache.
-        let (_, _, s1) = client.get_stream(&url).await.unwrap();
+        let (_, _, _, s1) = client.get_stream(&url).await.unwrap();
         assert_eq!(collect_stream(s1).await.unwrap().len(), big_body.len());
 
         // Warm run — must be served from disc. Poll once and assert we receive
         // a non-terminal chunk, then drain the rest.
-        let (status, _, mut stream) = client.get_stream(&url).await.unwrap();
+        let (status, _, _, mut stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
 
         let first = stream
@@ -1717,7 +1748,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, _, mut stream) = client.get_stream(&url).await.unwrap();
+        let (status, _, _, mut stream) = client.get_stream(&url).await.unwrap();
         assert_eq!(status, 200);
 
         let first = stream

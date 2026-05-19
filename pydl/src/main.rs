@@ -1,9 +1,12 @@
 mod cmd;
+pub mod progress;
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+
+use crate::progress::ProgressMode;
 
 /// HTTP `User-Agent` for outbound requests from `pydl`. Subcommands that mint
 /// their own UA (e.g. `self-update`, which appends a suffix) build on this.
@@ -31,6 +34,7 @@ const VERSION_STRING: &str = concat!(
 );
 
 #[derive(Parser, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 #[command(
     name = "pydl",
     version = VERSION_STRING,
@@ -84,6 +88,15 @@ pub struct Cli {
         overrides_with = "log_timestamps"
     )]
     no_log_timestamps: bool,
+
+    /// Show progress indicators during network operations. Default: auto-detect
+    /// based on whether stderr is a terminal.
+    #[arg(long, global = true, overrides_with = "no_progress")]
+    progress: bool,
+
+    /// Suppress progress indicators unconditionally.
+    #[arg(long = "no-progress", global = true, overrides_with = "progress")]
+    no_progress: bool,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -148,10 +161,11 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)
             .with_context(|| format!("changing to directory {}", dir.display()))?;
     }
+    let progress_mode = ProgressMode::from_flags(cli.progress, cli.no_progress);
     match cli.cmd {
-        Cmd::Update(args) => cmd::update::run(args).await,
+        Cmd::Update(args) => cmd::update::run(args, progress_mode).await,
         Cmd::Available(args) => cmd::available::run(args),
-        Cmd::Download(args) => cmd::download::run(args).await,
+        Cmd::Download(args) => cmd::download::run(args, progress_mode).await,
         Cmd::Install(args) => cmd::install::run(args),
         Cmd::Installed(args) => cmd::installed::run(args),
         Cmd::Uninstall(args) => cmd::uninstall::run(args),
@@ -160,6 +174,6 @@ async fn main() -> Result<()> {
         Cmd::Status(args) => cmd::status::run(args),
         Cmd::Cache(args) => cmd::cache::run(args),
         Cmd::Completions(args) => cmd::completions::run(args),
-        Cmd::SelfUpdate(args) => cmd::self_update::run(args).await,
+        Cmd::SelfUpdate(args) => cmd::self_update::run(args, progress_mode).await,
     }
 }

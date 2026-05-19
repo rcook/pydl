@@ -18,6 +18,7 @@ dunce = { workspace = true }
 env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures-util = { workspace = true }
+indicatif = { workspace = true }
 log = { workspace = true }
 owo-colors = { workspace = true }
 pydl-cache = { path = "../pydl-cache" }

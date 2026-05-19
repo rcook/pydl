@@ -20,12 +20,14 @@ use std::future::Future;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use pydl_cache::{CachingClient, Method, StatusCode};
 use pydl_common::filter::Release;
 use pydl_common::snapshot::{self, PydlRelease};
 use pydl_common::{PER_PAGE, fetch_releases_page, make_client, min_freshness_secs};
 use semver::Version;
+
+use crate::progress::{self, ProgressMode};
 
 const SELF_OWNER: &str = "rcook";
 const SELF_REPO: &str = "pydl";
@@ -38,13 +40,14 @@ pub struct Args {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub async fn run(args: Args) -> Result<()> {
+pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let min_freshness = min_freshness_secs()?;
     debug!("cache min-freshness floor: {min_freshness}s");
     let client = make_client(crate::USER_AGENT, min_freshness)?;
 
-    debug!("fetching python-build-standalone releases...");
-    let releases = fetch_pbs_releases(&client, args.full).await?;
+    let pb = progress::spinner(progress_mode, "fetching releases...");
+    let releases = fetch_pbs_releases(&client, args.full, &pb).await?;
+    pb.finish_and_clear();
     snapshot::write_pbs_releases(&releases)
         .with_context(|| "writing pbs-releases snapshot".to_owned())?;
     println!(
@@ -53,8 +56,9 @@ pub async fn run(args: Args) -> Result<()> {
         snapshot::pbs_releases_path()?.display()
     );
 
-    debug!("fetching latest pydl release...");
+    let pb = progress::spinner(progress_mode, "fetching latest pydl release...");
     let pydl_latest = fetch_latest_pydl_stable(&client).await?;
+    pb.finish_and_clear();
     snapshot::write_pydl_latest(&pydl_latest)
         .with_context(|| "writing pydl-latest snapshot".to_owned())?;
     println!(
@@ -96,26 +100,35 @@ fn emit_pydl_trailer(release: &PydlRelease) {
 }
 
 /// Fetch PBS releases: incremental when a valid snapshot exists, full otherwise.
-async fn fetch_pbs_releases(client: &CachingClient, force_full: bool) -> Result<Vec<Release>> {
-    let fetch_page = |page| fetch_releases_page(client, page, PER_PAGE);
+async fn fetch_pbs_releases(
+    client: &CachingClient,
+    force_full: bool,
+    pb: &indicatif::ProgressBar,
+) -> Result<Vec<Release>> {
+    let fetch_page = |page: usize| {
+        pb.set_message(format!("fetching releases (page {page})..."));
+        fetch_releases_page(client, page, PER_PAGE)
+    };
     if force_full {
-        info!("--full: performing complete re-fetch");
+        debug!("--full: performing complete re-fetch");
     } else if let Some(envelope) = snapshot::read_pbs_releases()? {
         let existing = envelope.payload;
         match fetch_incremental(&fetch_page, &existing).await? {
             Some(new_releases) if new_releases.is_empty() => {
-                info!("already up to date (0 new releases)");
+                pb.finish_and_clear();
+                println!("already up to date");
                 return Ok(existing);
             }
             Some(new_releases) => {
+                pb.finish_and_clear();
                 let count = new_releases.len();
-                info!("{count} new release(s) found, prepending to snapshot");
+                println!("{count} new release(s) found");
                 let mut merged = new_releases;
                 merged.extend(existing);
                 return Ok(merged);
             }
             None => {
-                info!("incremental fetch not possible, performing full refresh");
+                debug!("incremental fetch not possible, performing full refresh");
             }
         }
     } else {

@@ -23,12 +23,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use futures_util::StreamExt;
-use log::{debug, info, warn};
-use pydl_cache::{CachingClient, Method, StatusCode};
+use log::{debug, warn};
+use pydl_cache::{CacheOutcome, CachingClient, Method, StatusCode};
 use pydl_common::snapshot::{self, PydlRelease, PydlReleaseAsset};
 use pydl_common::{cache_dir, checksums, min_freshness_secs};
 use semver::Version;
 use serde::Deserialize;
+
+use crate::progress::{self, ProgressMode};
 
 const SELF_OWNER: &str = "rcook";
 const SELF_REPO: &str = "pydl";
@@ -123,7 +125,7 @@ enum ArchiveKind {
 // download, checksum verify, extract, replace). Splitting it for the sake
 // of `too_many_lines` would obscure the linear flow.
 #[allow(clippy::too_many_lines)]
-pub async fn run(args: Args) -> Result<()> {
+pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let current_str = env!("CARGO_PKG_VERSION");
     let current = Version::parse(current_str)
         .with_context(|| format!("parsing CARGO_PKG_VERSION {current_str:?}"))?;
@@ -159,7 +161,7 @@ pub async fn run(args: Args) -> Result<()> {
                  pass --online to check upstream directly."
             )
         })?;
-        info!("{}", snapshot::staleness_report(envelope.fetched_at));
+        println!("{}", snapshot::staleness_report(envelope.fetched_at));
         envelope.payload
     };
 
@@ -212,7 +214,7 @@ pub async fn run(args: Args) -> Result<()> {
         .tempdir()
         .context("creating staging tempdir")?;
     let archive_path = staging.path().join(&asset.name);
-    download_archive(&client, url, &asset.name, &archive_path).await?;
+    download_archive(&client, url, &asset.name, &archive_path, progress_mode).await?;
     verify_release_checksum(
         &client,
         &release,
@@ -343,13 +345,21 @@ async fn download_archive(
     url: &str,
     asset_name: &str,
     dest: &Path,
+    progress_mode: ProgressMode,
 ) -> Result<u64> {
     use tokio::io::AsyncWriteExt;
 
-    let (status, _outcome, mut stream) = client.get_stream(url).await?;
+    let (status, outcome, content_length, mut stream) = client.get_stream(url).await?;
     if status != StatusCode::OK {
         bail!("GET {url} returned {status}");
     }
+
+    let pb = if outcome == CacheOutcome::Downloaded {
+        progress::download_bar(progress_mode, content_length)
+    } else {
+        indicatif::ProgressBar::hidden()
+    };
+
     let mut file = tokio::fs::File::create(dest)
         .await
         .with_context(|| format!("creating {}", dest.display()))?;
@@ -360,11 +370,13 @@ async fn download_archive(
             .await
             .with_context(|| format!("writing {}", dest.display()))?;
         total += chunk.len() as u64;
+        pb.inc(chunk.len() as u64);
     }
     file.flush()
         .await
         .with_context(|| format!("flushing {}", dest.display()))?;
-    info!(
+    pb.finish_and_clear();
+    debug!(
         "downloaded {asset_name} ({total} bytes) -> {}",
         dest.display()
     );
@@ -389,7 +401,14 @@ async fn download_checksums(
     asset: &ReleaseAsset,
     dest: &Path,
 ) -> Result<std::collections::HashMap<String, String>> {
-    download_archive(client, &asset.browser_download_url, &asset.name, dest).await?;
+    download_archive(
+        client,
+        &asset.browser_download_url,
+        &asset.name,
+        dest,
+        ProgressMode::Never,
+    )
+    .await?;
     let body = tokio::fs::read_to_string(dest)
         .await
         .with_context(|| format!("reading {}", dest.display()))?;
@@ -561,7 +580,7 @@ mod tests {
         let url = format!("{}/pydl.tar.gz", server.uri());
         let dest = dest_dir.path().join("pydl.tar.gz");
 
-        let total = download_archive(&client, &url, "pydl.tar.gz", &dest)
+        let total = download_archive(&client, &url, "pydl.tar.gz", &dest, ProgressMode::Never)
             .await
             .expect(
                 "download_archive must succeed even when upstream sets Cache-Control: no-store",

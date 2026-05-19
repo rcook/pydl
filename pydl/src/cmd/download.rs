@@ -14,6 +14,8 @@ use pydl_common::{OWNER, REPO, checksums, make_client, min_freshness_secs};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
+use crate::progress::{self, ProgressMode};
+
 #[derive(Parser, Debug)]
 pub struct Args {
     #[command(flatten)]
@@ -27,7 +29,7 @@ pub struct Args {
     pub output_dir: Option<PathBuf>,
 }
 
-pub async fn run(args: Args) -> Result<()> {
+pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let Args { filter, output_dir } = args;
     let mut filter = apply_config_defaults(filter)?;
     auto_select_tag_embedded(&mut filter)?;
@@ -46,7 +48,8 @@ pub async fn run(args: Args) -> Result<()> {
     // on-disc body; draining the stream here is what "warms" the cache.
     // The stream itself is also SHA-hashed so we can verify before any
     // user-visible file is written.
-    let (total, outcome) = stream_through_cache(&client, &url, expected, asset_name).await?;
+    let (total, outcome) =
+        stream_through_cache(&client, &url, expected, asset_name, progress_mode).await?;
     let body_path = client.cached_body_path(&url)?.with_context(|| {
         format!("cache body missing for {url} after successful fetch (this is a bug)")
     })?;
@@ -98,29 +101,31 @@ async fn stream_through_cache(
     url: &str,
     expected_hex: &str,
     asset_name: &str,
+    progress_mode: ProgressMode,
 ) -> Result<(u64, CacheOutcome)> {
-    let (status, outcome, mut stream) = client.get_stream(url).await?;
+    let (status, outcome, content_length, mut stream) = client.get_stream(url).await?;
     if status != StatusCode::OK {
         bail!("GET {url} returned {status}");
     }
+
+    let pb = if outcome == CacheOutcome::Downloaded {
+        progress::download_bar(progress_mode, content_length)
+    } else {
+        indicatif::ProgressBar::hidden()
+    };
+
     let mut hasher = Sha256::new();
-    // Drain the stream; the cache writes the tee'd bytes to its body file
-    // as a side effect of iterating the stream.
     let mut total: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("reading chunk from upstream")?;
         hasher.update(&chunk);
         total += chunk.len() as u64;
+        pb.inc(chunk.len() as u64);
     }
+    pb.finish_and_clear();
 
     let actual = checksums::hex_digest(hasher);
     if !checksums::hashes_match(expected_hex, &actual) {
-        // The cache holds the wrong bytes upstream served us. Evict before
-        // bailing so a re-run actually refetches instead of serving the
-        // poisoned entry as a HIT (or revalidating against the same bad
-        // upstream and getting a 304). Eviction failure is logged but does
-        // not mask the original mismatch error — the user can still recover
-        // with `pydl cache clear --yes`.
         if let Err(e) = client.evict(url) {
             warn!("failed to evict cache entry for {url} after sha256 mismatch: {e:#}");
         }
@@ -165,9 +170,15 @@ mod tests {
         let url = format!("{}/asset.tar.zst", server.uri());
         let expected = sha256_hex(body);
 
-        let (total, outcome) = stream_through_cache(&client, &url, &expected, "asset.tar.zst")
-            .await
-            .expect("matching hash must succeed");
+        let (total, outcome) = stream_through_cache(
+            &client,
+            &url,
+            &expected,
+            "asset.tar.zst",
+            ProgressMode::Never,
+        )
+        .await
+        .expect("matching hash must succeed");
 
         assert_eq!(total, body.len() as u64);
         assert_eq!(outcome, CacheOutcome::Downloaded);
@@ -190,9 +201,15 @@ mod tests {
         let url = format!("{}/asset.tar.zst", server.uri());
         let wrong_expected = "0".repeat(64);
 
-        let err = stream_through_cache(&client, &url, &wrong_expected, "asset.tar.zst")
-            .await
-            .expect_err("mismatched hash must error");
+        let err = stream_through_cache(
+            &client,
+            &url,
+            &wrong_expected,
+            "asset.tar.zst",
+            ProgressMode::Never,
+        )
+        .await
+        .expect_err("mismatched hash must error");
 
         let msg = format!("{err:#}");
         assert!(msg.contains("sha256 mismatch"), "got: {msg}");
@@ -219,9 +236,15 @@ mod tests {
         let client = CachingClient::new(cache_dir.path()).unwrap();
         let url = format!("{}/asset.tar.zst", server.uri());
 
-        let err = stream_through_cache(&client, &url, &"a".repeat(64), "asset.tar.zst")
-            .await
-            .expect_err("non-200 must error");
+        let err = stream_through_cache(
+            &client,
+            &url,
+            &"a".repeat(64),
+            "asset.tar.zst",
+            ProgressMode::Never,
+        )
+        .await
+        .expect_err("non-200 must error");
 
         let msg = format!("{err:#}");
         assert!(msg.contains("404"), "got: {msg}");

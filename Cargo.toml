@@ -35,6 +35,7 @@ httpdate = "1"
 log = "0.4"
 bytes = "1"
 futures-util = "0.3"
+indicatif = "0.17"
 reqwest = { version = "0.13.3", default-features = false, features = ["stream", "rustls", "http2", "charset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
