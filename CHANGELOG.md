@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.24] - 2026-05-19
+
+
+### Features
+- Add more tests (050a523)
+
+
+### Internal
+- Simplify some code (36eb786)
+- Refactor (19e1905)
+
+
+### Tooling
+- Simplify workspace: split pydl-cache into modules, merge utility crates, tidy self_update (9bf66ba)
+- Fix Clippy issue (4aeea40)
+
 ## [0.1.23] - 2026-05-19
 
 
