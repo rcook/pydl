@@ -207,16 +207,13 @@ impl CachingClient {
         Ok(())
     }
 
-    pub async fn get_stream(
+    fn check_fresh_hit(
         &self,
         url: &str,
-    ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
-        let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
-        let canonical = Self::canonical_url(&parsed);
-        let existing = self.load_entry(&canonical)?;
-        let now = unix_now();
-
-        if let Some((paths, meta)) = &existing
+        existing: Option<&(EntryPaths, EntryMeta)>,
+        now: u64,
+    ) -> Result<Option<(StatusCode, Option<u64>, PathBuf)>> {
+        if let Some((paths, meta)) = existing
             && !meta.must_revalidate
         {
             let server_expiry = meta.expires_at;
@@ -236,13 +233,23 @@ impl CachingClient {
                     paths.body.display()
                 );
                 let len = file_len(&paths.body);
-                return Ok((
-                    status,
-                    CacheOutcome::Hit,
-                    len,
-                    open_stream(&paths.body).await?,
-                ));
+                return Ok(Some((status, len, paths.body.clone())));
             }
+        }
+        Ok(None)
+    }
+
+    pub async fn get_stream(
+        &self,
+        url: &str,
+    ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
+        let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
+        let canonical = Self::canonical_url(&parsed);
+        let existing = self.load_entry(&canonical)?;
+        let now = unix_now();
+
+        if let Some((status, len, body)) = self.check_fresh_hit(url, existing.as_ref(), now)? {
+            return Ok((status, CacheOutcome::Hit, len, open_stream(&body).await?));
         }
 
         let mut req = self.inner.get(parsed);
