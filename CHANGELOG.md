@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Generated from git commits by [git-cliff](https://git-cliff.org).
 
+## [0.1.21] - 2026-05-19
+
+
+### Internal
+- Upgrade to indicatif 0.18.4 (d092927)
+
 ## [0.1.20] - 2026-05-19
 
 
