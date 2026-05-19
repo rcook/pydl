@@ -1573,7 +1573,7 @@ mod tests {
         let parsed = crate::asset::ParsedAsset::parse(sample_name).unwrap();
         let mut args = FilterArgs {
             tag: None,
-            version: Some(parsed.version.to_owned()),
+            version: Some(parsed.version),
             platform: false,
             no_platform: true,
             default_attrs: false,
