@@ -1,6 +1,6 @@
 name: check-checksums
 
-# Runs the `check-checksums` crate, which re-fetches every committed
+# Runs the `check-checksums` binary, which re-fetches every committed
 # `./checksums/*.sha256sums` from upstream and diffs against the committed
 # bytes. Catches two failure modes:
 #
@@ -21,14 +21,14 @@ on:
     branches: [main]
     paths:
       - "checksums/**"
-      - "check-checksums/**"
+      - "pydl-common/src/bin/check_checksums.rs"
       - "pydl-common/src/lib.rs"
       - ".github/workflows/check-checksums.yml"
   pull_request:
     branches: [main]
     paths:
       - "checksums/**"
-      - "check-checksums/**"
+      - "pydl-common/src/bin/check_checksums.rs"
       - "pydl-common/src/lib.rs"
       - ".github/workflows/check-checksums.yml"
   schedule:

@@ -121,15 +121,19 @@ enum ArchiveKind {
     Zip,
 }
 
-// `run` orchestrates the entire self-update flow (version resolution,
-// download, checksum verify, extract, replace). Splitting it for the sake
-// of `too_many_lines` would obscure the linear flow.
-#[allow(clippy::too_many_lines)]
+impl ArchiveKind {
+    const fn binary_name(self) -> &'static str {
+        match self {
+            Self::TarGz => "pydl",
+            Self::Zip => "pydl.exe",
+        }
+    }
+}
+
 pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let current_str = env!("CARGO_PKG_VERSION");
     let current = Version::parse(current_str)
         .with_context(|| format!("parsing CARGO_PKG_VERSION {current_str:?}"))?;
-    // Set at compile time by `pydl/build.rs` (re-exporting cargo's TARGET).
     let target = env!("PYDL_BUILD_TARGET");
 
     if args.pre && !args.online {
@@ -144,37 +148,7 @@ pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let client = CachingClient::with_user_agent(cache_dir()?, Some(user_agent.as_str()))?
         .with_min_freshness_secs(min_freshness_secs()?);
 
-    let release = if args.online {
-        if args.pre {
-            fetch_latest_including_pre(&client).await?
-        } else {
-            fetch_latest_stable(&client).await?
-        }
-    } else {
-        let envelope = snapshot::read_pydl_latest()?.ok_or_else(|| {
-            let p = snapshot::pydl_latest_path().map_or_else(
-                |_| "<snapshot path unavailable>".to_owned(),
-                |p| p.display().to_string(),
-            );
-            anyhow!(
-                "no pydl version snapshot found at {p}. Run `pydl update`, or \
-                 pass --online to check upstream directly."
-            )
-        })?;
-        println!("{}", snapshot::staleness_report(envelope.fetched_at));
-        envelope.payload
-    };
-
-    let latest_str = release
-        .tag_name
-        .strip_prefix('v')
-        .unwrap_or(&release.tag_name);
-    let latest = Version::parse(latest_str)
-        .with_context(|| format!("parsing release tag {:?} as semver", release.tag_name))?;
-    debug!(
-        "latest release on GitHub: {} (running {current})",
-        release.tag_name
-    );
+    let (release, latest) = resolve_target_release(&args, &client, &current).await?;
 
     if !args.force {
         if latest == current {
@@ -249,6 +223,46 @@ pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
 
     println!("pydl updated: {current} -> {latest}");
     Ok(())
+}
+
+async fn resolve_target_release(
+    args: &Args,
+    client: &CachingClient,
+    current: &Version,
+) -> Result<(Release, Version)> {
+    let release = if args.online {
+        if args.pre {
+            fetch_latest_including_pre(client).await?
+        } else {
+            fetch_latest_stable(client).await?
+        }
+    } else {
+        let envelope = snapshot::read_pydl_latest()?.ok_or_else(|| {
+            let p = snapshot::pydl_latest_path().map_or_else(
+                |_| "<snapshot path unavailable>".to_owned(),
+                |p| p.display().to_string(),
+            );
+            anyhow!(
+                "no pydl version snapshot found at {p}. Run `pydl update`, or \
+                 pass --online to check upstream directly."
+            )
+        })?;
+        println!("{}", snapshot::staleness_report(envelope.fetched_at));
+        envelope.payload
+    };
+
+    let latest_str = release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name);
+    let latest = Version::parse(latest_str)
+        .with_context(|| format!("parsing release tag {:?} as semver", release.tag_name))?;
+    debug!(
+        "latest release on GitHub: {} (running {current})",
+        release.tag_name
+    );
+
+    Ok((release, latest))
 }
 
 async fn fetch_latest_stable(client: &CachingClient) -> Result<Release> {
@@ -482,13 +496,14 @@ async fn verify_release_checksum(
 }
 
 fn extract_pydl_binary(archive_path: &Path, kind: ArchiveKind, dest_dir: &Path) -> Result<PathBuf> {
+    let binary_name = kind.binary_name();
     match kind {
-        ArchiveKind::TarGz => extract_from_tar_gz(archive_path, dest_dir),
-        ArchiveKind::Zip => extract_from_zip(archive_path, dest_dir),
+        ArchiveKind::TarGz => extract_from_tar_gz(archive_path, dest_dir, binary_name),
+        ArchiveKind::Zip => extract_from_zip(archive_path, dest_dir, binary_name),
     }
 }
 
-fn extract_from_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
+fn extract_from_tar_gz(archive_path: &Path, dest_dir: &Path, binary_name: &str) -> Result<PathBuf> {
     let file =
         File::open(archive_path).with_context(|| format!("opening {}", archive_path.display()))?;
     let gz = flate2::read::GzDecoder::new(BufReader::new(file));
@@ -507,8 +522,8 @@ fn extract_from_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> 
             Some(n) => n.to_owned(),
             None => continue,
         };
-        if basename == "pydl" {
-            let dest = dest_dir.join("pydl");
+        if basename == binary_name {
+            let dest = dest_dir.join(binary_name);
             let mut out =
                 File::create(&dest).with_context(|| format!("creating {}", dest.display()))?;
             io::copy(&mut entry, &mut out)
@@ -517,10 +532,15 @@ fn extract_from_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> 
             break;
         }
     }
-    found.with_context(|| format!("no `pydl` binary found in {}", archive_path.display()))
+    found.with_context(|| {
+        format!(
+            "no `{binary_name}` binary found in {}",
+            archive_path.display()
+        )
+    })
 }
 
-fn extract_from_zip(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
+fn extract_from_zip(archive_path: &Path, dest_dir: &Path, binary_name: &str) -> Result<PathBuf> {
     let file =
         File::open(archive_path).with_context(|| format!("opening {}", archive_path.display()))?;
     let mut zip = zip::ZipArchive::new(BufReader::new(file))
@@ -532,8 +552,8 @@ fn extract_from_zip(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
             .file_name()
             .map(std::ffi::OsStr::to_owned)
             .unwrap_or_default();
-        if basename == "pydl.exe" {
-            let dest = dest_dir.join("pydl.exe");
+        if basename == binary_name {
+            let dest = dest_dir.join(binary_name);
             let mut out =
                 File::create(&dest).with_context(|| format!("creating {}", dest.display()))?;
             io::copy(&mut entry, &mut out)
@@ -541,7 +561,10 @@ fn extract_from_zip(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
             return Ok(dest);
         }
     }
-    bail!("no `pydl.exe` binary found in {}", archive_path.display());
+    bail!(
+        "no `{binary_name}` binary found in {}",
+        archive_path.display()
+    );
 }
 
 #[cfg(test)]
@@ -755,7 +778,7 @@ mod tests {
         let archive_path = dir.path().join("pydl.tar.gz");
         std::fs::write(&archive_path, &archive_bytes).unwrap();
 
-        let result = extract_from_tar_gz(&archive_path, dir.path()).unwrap();
+        let result = extract_from_tar_gz(&archive_path, dir.path(), "pydl").unwrap();
         assert_eq!(result, dir.path().join("pydl"));
         assert_eq!(
             std::fs::read_to_string(&result).unwrap(),
@@ -770,7 +793,7 @@ mod tests {
         let archive_path = dir.path().join("pydl.tar.gz");
         std::fs::write(&archive_path, &archive_bytes).unwrap();
 
-        let err = extract_from_tar_gz(&archive_path, dir.path())
+        let err = extract_from_tar_gz(&archive_path, dir.path(), "pydl")
             .expect_err("missing pydl binary must error");
         let msg = format!("{err:#}");
         assert!(msg.contains("no `pydl` binary"), "got: {msg}");
@@ -790,7 +813,7 @@ mod tests {
             zip.finish().unwrap();
         }
 
-        let result = extract_from_zip(&archive_path, dir.path()).unwrap();
+        let result = extract_from_zip(&archive_path, dir.path(), "pydl.exe").unwrap();
         assert_eq!(result, dir.path().join("pydl.exe"));
         assert_eq!(
             std::fs::read_to_string(&result).unwrap(),
@@ -812,8 +835,8 @@ mod tests {
             zip.finish().unwrap();
         }
 
-        let err =
-            extract_from_zip(&archive_path, dir.path()).expect_err("missing pydl.exe must error");
+        let err = extract_from_zip(&archive_path, dir.path(), "pydl.exe")
+            .expect_err("missing pydl.exe must error");
         let msg = format!("{err:#}");
         assert!(msg.contains("no `pydl.exe` binary"), "got: {msg}");
     }

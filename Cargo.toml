@@ -4,8 +4,6 @@ members = [
     "pydl",
     "pydl-cache",
     "pydl-common",
-    "get-checksums",
-    "check-checksums",
 ]
 
 [workspace.package]

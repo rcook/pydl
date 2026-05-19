@@ -60,10 +60,10 @@ case "$cmd" in
         "$CARGO" run -p pydl --quiet -- "$@"
         ;;
     get-checksums)
-        "$CARGO" run -p get-checksums -- "$@"
+        "$CARGO" run --bin get-checksums -- "$@"
         ;;
     check-checksums)
-        "$CARGO" run -p check-checksums -- "$@"
+        "$CARGO" run --bin check-checksums -- "$@"
         ;;
     crap)
         cargo llvm-cov --workspace --lcov --output-path lcov.info

@@ -94,11 +94,11 @@ switch ($cmd) {
         break
     }
     'get-checksums' {
-        Invoke-Native $cargo (@('run', '-p', 'get-checksums', '--') + $rest)
+        Invoke-Native $cargo (@('run', '--bin', 'get-checksums', '--') + $rest)
         break
     }
     'check-checksums' {
-        Invoke-Native $cargo (@('run', '-p', 'check-checksums', '--') + $rest)
+        Invoke-Native $cargo (@('run', '--bin', 'check-checksums', '--') + $rest)
         break
     }
     'install-pydl' {

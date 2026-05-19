@@ -151,13 +151,9 @@ async fn main() -> Result<()> {
         entries.len(),
     );
 
-    // Fan out with bounded parallelism. Each future carries its own `tag`
-    // back out with the outcome so we can aggregate and report. `check_one`
-    // only reads from the shared client, so no locking is needed.
     let mut in_flight = FuturesUnordered::new();
     let mut iter = entries.iter();
 
-    // Seed the first CONCURRENCY futures.
     for _ in 0..CONCURRENCY {
         if let Some((tag, body)) = iter.next() {
             in_flight.push(check_one_owned(&client, tag.clone(), body.clone()));

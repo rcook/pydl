@@ -169,20 +169,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-name = "check-checksums"
-version = "0.1.23"
-dependencies = [
- "anyhow",
- "clap",
- "env_logger",
- "futures-util",
- "log",
- "pydl-cache",
- "pydl-common",
- "tokio",
-]
-
-[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,20 +549,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "get-checksums"
-version = "0.1.23"
-dependencies = [
- "anyhow",
- "clap",
- "env_logger",
- "log",
- "pydl-cache",
- "pydl-common",
- "serde",
- "tokio",
 ]
 
 [[package]]
@@ -1281,6 +1253,7 @@ version = "0.1.23"
 dependencies = [
  "anyhow",
  "clap",
+ "env_logger",
  "flate2",
  "futures-util",
  "log",

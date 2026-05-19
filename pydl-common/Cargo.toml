@@ -7,9 +7,18 @@ build = "build.rs"
 [lints]
 workspace = true
 
+[[bin]]
+name = "get-checksums"
+path = "src/bin/get_checksums.rs"
+
+[[bin]]
+name = "check-checksums"
+path = "src/bin/check_checksums.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
