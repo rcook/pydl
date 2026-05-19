@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow, bail};
-use log::info;
+use log::debug;
+pub use pydl_cache::Notice;
 use pydl_cache::{CachingClient, Method, StatusCode};
 use serde::de::DeserializeOwned;
 
@@ -96,25 +97,43 @@ const BASE_BACKOFF_MS: u64 = 1000;
 
 /// Run a GET through the cache with bounded retries on transient upstream
 /// failures (network errors and the statuses in [`RETRY_STATUSES`]).
-async fn request_with_retry(client: &CachingClient, url: &str) -> Result<(StatusCode, Vec<u8>)> {
+async fn request_with_retry(
+    client: &CachingClient,
+    url: &str,
+) -> Result<(StatusCode, Vec<u8>, Vec<Notice>)> {
+    let mut all_notices: Vec<Notice> = Vec::new();
     let mut attempt: u32 = 1;
     loop {
         let outcome = client.request(Method::GET, url).await;
         let retry_reason = match &outcome {
-            Ok((status, _)) if RETRY_STATUSES.contains(status) => Some(format!("{status}")),
+            Ok((status, _, notices)) => {
+                all_notices.extend(notices.iter().cloned());
+                if RETRY_STATUSES.contains(status) {
+                    Some(format!("{status}"))
+                } else {
+                    None
+                }
+            }
             Err(e) => Some(format!("network error: {e}")),
-            _ => None,
         };
         match retry_reason {
             Some(reason) if attempt < MAX_ATTEMPTS => {
                 let delay = backoff_ms(attempt);
-                info!(
+                debug!(
                     "GET {url} -> {reason}, retrying in {delay}ms (attempt {attempt}/{MAX_ATTEMPTS})"
                 );
+                all_notices.push(Notice::Retry {
+                    reason,
+                    attempt,
+                    max_attempts: MAX_ATTEMPTS,
+                    delay_ms: delay,
+                });
                 tokio::time::sleep(Duration::from_millis(delay)).await;
                 attempt += 1;
             }
-            _ => return outcome,
+            _ => {
+                return outcome.map(|(status, body, _)| (status, body, all_notices));
+            }
         }
     }
 }
@@ -168,15 +187,17 @@ pub async fn fetch_releases_page<T: DeserializeOwned>(
     client: &CachingClient,
     page: usize,
     per_page: usize,
-) -> Result<Vec<T>> {
+) -> Result<(Vec<T>, Vec<Notice>)> {
     let url = format!(
         "https://api.github.com/repos/{OWNER}/{REPO}/releases?per_page={per_page}&page={page}"
     );
-    let (status, body) = request_with_retry(client, &url).await?;
+    let (status, body, notices) = request_with_retry(client, &url).await?;
     if status != StatusCode::OK {
         bail!("GET {url} returned {status}{}", format_error_body(&body));
     }
-    serde_json::from_slice(&body).map_err(|e| anyhow!("parsing releases page {page}: {e}"))
+    let parsed =
+        serde_json::from_slice(&body).map_err(|e| anyhow!("parsing releases page {page}: {e}"))?;
+    Ok((parsed, notices))
 }
 
 #[cfg(test)]
@@ -251,7 +272,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, body) = request_with_retry(&client, &url).await.unwrap();
+        let (status, body, _) = request_with_retry(&client, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"[]");
     }
@@ -271,7 +292,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, body) = request_with_retry(&client, &url).await.unwrap();
+        let (status, body, _) = request_with_retry(&client, &url).await.unwrap();
         assert_eq!(status, 504);
 
         // The error message produced by the call site must not include the
@@ -298,7 +319,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, _body) = request_with_retry(&client, &url).await.unwrap();
+        let (status, _body, _) = request_with_retry(&client, &url).await.unwrap();
         assert_eq!(status, 404);
     }
 

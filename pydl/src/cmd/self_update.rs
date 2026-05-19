@@ -253,7 +253,7 @@ pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
 
 async fn fetch_latest_stable(client: &CachingClient) -> Result<Release> {
     let url = format!("https://api.github.com/repos/{SELF_OWNER}/{SELF_REPO}/releases/latest");
-    let (status, body) = client.request(Method::GET, &url).await?;
+    let (status, body, _) = client.request(Method::GET, &url).await?;
     if status != StatusCode::OK {
         bail!(
             "GET {url} returned {status}: {}",
@@ -273,7 +273,7 @@ async fn fetch_latest_including_pre(client: &CachingClient) -> Result<Release> {
     let url = format!(
         "https://api.github.com/repos/{SELF_OWNER}/{SELF_REPO}/releases?per_page={PRE_PAGE_SIZE}"
     );
-    let (status, body) = client.request(Method::GET, &url).await?;
+    let (status, body, _) = client.request(Method::GET, &url).await?;
     if status != StatusCode::OK {
         bail!(
             "GET {url} returned {status}: {}",

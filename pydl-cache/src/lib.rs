@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, TryStreamExt};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use reqwest::header::{
     CACHE_CONTROL, ETAG, EXPIRES, HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH,
     LAST_MODIFIED, RETRY_AFTER,
@@ -28,6 +28,20 @@ pub enum CacheOutcome {
     Revalidated,
     Downloaded,
     StaleIfError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notice {
+    RateLimit(String),
+    StaleIfError {
+        upstream_status: StatusCode,
+    },
+    Retry {
+        reason: String,
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -243,6 +257,15 @@ impl CachingClient {
         &self,
         url: &str,
     ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
+        let mut notices = Vec::new();
+        self.get_stream_inner(url, &mut notices).await
+    }
+
+    async fn get_stream_inner(
+        &self,
+        url: &str,
+        notices: &mut Vec<Notice>,
+    ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
         let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
         let canonical = Self::canonical_url(&parsed);
         let existing = self.load_entry(&canonical)?;
@@ -310,7 +333,7 @@ impl CachingClient {
 
         if !status.is_success() {
             return self
-                .handle_upstream_error(url, status, &headers, now, existing, resp)
+                .handle_upstream_error(url, status, &headers, now, existing, resp, notices)
                 .await;
         }
 
@@ -336,6 +359,7 @@ impl CachingClient {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_upstream_error(
         &self,
         url: &str,
@@ -344,17 +368,22 @@ impl CachingClient {
         now: u64,
         existing: Option<(EntryPaths, EntryMeta)>,
         resp: Response,
+        notices: &mut Vec<Notice>,
     ) -> Result<(StatusCode, CacheOutcome, Option<u64>, ByteStream)> {
         if let Some(msg) = rate_limit_message(status, headers, now) {
-            info!("GET {url} -> {msg}");
+            debug!("GET {url} -> {msg}");
+            notices.push(Notice::RateLimit(msg));
         }
         if is_stale_if_error(status)
             && let Some((existing_paths, existing_meta)) = existing
         {
-            warn!(
+            debug!(
                 "GET {url} -> upstream returned {status}, serving stale entry (stale-if-error, body {})",
                 existing_paths.body.display()
             );
+            notices.push(Notice::StaleIfError {
+                upstream_status: status,
+            });
             let cached_status = StatusCode::from_u16(existing_meta.status)?;
             let len = file_len(&existing_paths.body);
             return Ok((
@@ -365,7 +394,7 @@ impl CachingClient {
             ));
         }
         if existing.is_some() {
-            warn!("GET {url} -> upstream returned {status}, not updating cache");
+            debug!("GET {url} -> upstream returned {status}, not updating cache");
         }
         let content_length = resp.content_length();
         Ok((
@@ -376,19 +405,24 @@ impl CachingClient {
         ))
     }
 
-    pub async fn request(&self, method: Method, url: &str) -> Result<(StatusCode, Vec<u8>)> {
+    pub async fn request(
+        &self,
+        method: Method,
+        url: &str,
+    ) -> Result<(StatusCode, Vec<u8>, Vec<Notice>)> {
         if method != Method::GET {
             debug!("{method} {url} -> bypassing cache");
             let parsed = Url::parse(url).with_context(|| format!("invalid url: {url}"))?;
             let resp = self.inner.request(method, parsed).send().await?;
             let status = resp.status();
             let body = resp.bytes().await?.to_vec();
-            return Ok((status, body));
+            return Ok((status, body, vec![]));
         }
 
-        let (status, _outcome, _len, stream) = self.get_stream(url).await?;
+        let mut notices = Vec::new();
+        let (status, _outcome, _len, stream) = self.get_stream_inner(url, &mut notices).await?;
         let body = collect_stream(stream).await?;
-        Ok((status, body))
+        Ok((status, body, notices))
     }
 }
 
@@ -966,8 +1000,8 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (s1, b1) = client.request(Method::GET, &url).await.unwrap();
-        let (s2, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (s1, b1, _) = client.request(Method::GET, &url).await.unwrap();
+        let (s2, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(s1, 200);
         assert_eq!(s2, 200);
         assert_eq!(b1, b"payload");
@@ -1022,8 +1056,8 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (_, b1) = client.request(Method::GET, &url).await.unwrap();
-        let (s2, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b1, _) = client.request(Method::GET, &url).await.unwrap();
+        let (s2, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(b1, b"body-v1");
         assert_eq!(s2, 200);
         assert_eq!(b2, b"body-v1");
@@ -1075,10 +1109,10 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (_, b1) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b1, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(b1, b"good");
 
-        let (s2, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (s2, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(s2, 200);
         assert_eq!(b2, b"good");
 
@@ -1115,7 +1149,7 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         client.request(Method::GET, &url).await.unwrap();
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -1147,7 +1181,7 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         client.request(Method::GET, &url).await.unwrap();
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -1177,7 +1211,7 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         client.request(Method::GET, &url).await.unwrap();
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 404);
         assert_eq!(body, b"gone");
     }
@@ -1195,7 +1229,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 500);
         assert_eq!(body, b"boom");
     }
@@ -1228,8 +1262,8 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (s1, _) = client.request(Method::POST, &url).await.unwrap();
-        let (s2, _) = client.request(Method::POST, &url).await.unwrap();
+        let (s1, _, _) = client.request(Method::POST, &url).await.unwrap();
+        let (s2, _, _) = client.request(Method::POST, &url).await.unwrap();
         assert_eq!(s1, 201);
         assert_eq!(s2, 201);
 
@@ -1266,8 +1300,8 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (_, b1) = client.request(Method::GET, &url).await.unwrap();
-        let (_, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b1, _) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(b1, b"data");
         assert_eq!(b2, b"data");
     }
@@ -1421,10 +1455,10 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (_, b1) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b1, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(b1, b"body-v1");
 
-        let (status, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (status, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(b2, b"body-v2");
 
@@ -1469,7 +1503,7 @@ mod tests {
         client.request(Method::GET, &url).await.unwrap();
 
         // Caller gets the fresh-but-volatile body back.
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"fresh-but-volatile");
 
@@ -1680,7 +1714,7 @@ mod tests {
 
         // Request should succeed, hitting the mock exactly once and populating
         // both files from the real response.
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"fresh");
         assert!(paths.body.exists());
@@ -1722,9 +1756,9 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (_, b1) = client.request(Method::GET, &url).await.unwrap();
+        let (_, b1, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(b1, b"body-v1");
-        let (status, b2) = client.request(Method::GET, &url).await.unwrap();
+        let (status, b2, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(b2, b"body-v1");
     }
@@ -1796,7 +1830,7 @@ mod tests {
             .await;
 
         let url = format!("{}/r", server.uri());
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"ok");
     }
@@ -1836,7 +1870,7 @@ mod tests {
         CachingClient::write_meta(&paths.meta, &meta).unwrap();
 
         // Floor-based freshness must keep this a HIT.
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -1867,7 +1901,7 @@ mod tests {
         client.request(Method::GET, &url).await.unwrap();
         // Second call is a HIT because of the server's 1-hour max-age, not
         // our tiny floor. We verify this indirectly via the single-call mock.
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -1905,7 +1939,7 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         client.request(Method::GET, &url).await.unwrap();
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -1929,7 +1963,7 @@ mod tests {
 
         let url = format!("{}/r", server.uri());
         client.request(Method::GET, &url).await.unwrap();
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"cached");
     }
@@ -2023,7 +2057,7 @@ mod tests {
         client.evict(&url).unwrap();
         // Without the evict, this would be a HIT (server's max-age=3600); the
         // `expect(2)` on the mock asserts upstream was actually re-hit.
-        let (status, body) = client.request(Method::GET, &url).await.unwrap();
+        let (status, body, _) = client.request(Method::GET, &url).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"payload");
     }

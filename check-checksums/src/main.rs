@@ -74,7 +74,7 @@ async fn check_one(
     embedded: &str,
     url: &str,
 ) -> Result<bool, CheckError> {
-    let (status, body) = client.request(Method::GET, url).await?;
+    let (status, body, _) = client.request(Method::GET, url).await?;
     if status != StatusCode::OK {
         return Err(CheckError::Status(status));
     }

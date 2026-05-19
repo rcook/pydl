@@ -21,7 +21,9 @@ use std::future::Future;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use log::{debug, warn};
-use pydl_cache::{CachingClient, Method, StatusCode};
+use owo_colors::OwoColorize;
+use owo_colors::Stream::Stdout;
+use pydl_cache::{CachingClient, Method, Notice, StatusCode};
 use pydl_common::filter::Release;
 use pydl_common::snapshot::{self, PydlRelease};
 use pydl_common::{PER_PAGE, fetch_releases_page, make_client};
@@ -44,8 +46,9 @@ pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     let client = make_client(crate::USER_AGENT, 0)?;
 
     let pb = progress::spinner(progress_mode, "fetching releases...");
-    let releases = fetch_pbs_releases(&client, args.full, &pb).await?;
+    let (releases, notices) = fetch_pbs_releases(&client, args.full, &pb).await?;
     pb.finish_and_clear();
+    print_notices(&notices);
     snapshot::write_pbs_releases(&releases)
         .with_context(|| "writing pbs-releases snapshot".to_owned())?;
     println!(
@@ -55,8 +58,9 @@ pub async fn run(args: Args, progress_mode: ProgressMode) -> Result<()> {
     );
 
     let pb = progress::spinner(progress_mode, "fetching latest pydl release...");
-    let pydl_latest = fetch_latest_pydl_stable(&client).await?;
+    let (pydl_latest, notices) = fetch_latest_pydl_stable(&client).await?;
     pb.finish_and_clear();
+    print_notices(&notices);
     snapshot::write_pydl_latest(&pydl_latest)
         .with_context(|| "writing pydl-latest snapshot".to_owned())?;
     println!(
@@ -97,12 +101,39 @@ fn emit_pydl_trailer(release: &PydlRelease) {
     println!("{}", snapshot::format_pydl_version_line(&running, &latest));
 }
 
+fn print_notices(notices: &[Notice]) {
+    for notice in notices {
+        match notice {
+            Notice::RateLimit(msg) => {
+                let line = format!("warning: {msg}");
+                println!("{}", line.if_supports_color(Stdout, |t| t.yellow()));
+            }
+            Notice::StaleIfError { upstream_status } => {
+                let line =
+                    format!("warning: upstream returned {upstream_status}, serving from cache");
+                println!("{}", line.if_supports_color(Stdout, |t| t.yellow()));
+            }
+            Notice::Retry {
+                reason,
+                attempt,
+                max_attempts,
+                delay_ms,
+            } => {
+                let line = format!(
+                    "  retrying ({attempt}/{max_attempts}, {reason}, backoff {delay_ms}ms)"
+                );
+                println!("{}", line.if_supports_color(Stdout, |t| t.dimmed()));
+            }
+        }
+    }
+}
+
 /// Fetch PBS releases: incremental when a valid snapshot exists, full otherwise.
 async fn fetch_pbs_releases(
     client: &CachingClient,
     force_full: bool,
     pb: &indicatif::ProgressBar,
-) -> Result<Vec<Release>> {
+) -> Result<(Vec<Release>, Vec<Notice>)> {
     let fetch_page = |page: usize| {
         pb.set_message(format!("fetching releases (page {page})..."));
         fetch_releases_page(client, page, PER_PAGE)
@@ -112,18 +143,18 @@ async fn fetch_pbs_releases(
     } else if let Some(envelope) = snapshot::read_pbs_releases()? {
         let existing = envelope.payload;
         match fetch_incremental(&fetch_page, &existing).await? {
-            Some(new_releases) if new_releases.is_empty() => {
+            Some((new_releases, notices)) if new_releases.is_empty() => {
                 pb.finish_and_clear();
                 println!("already up to date");
-                return Ok(existing);
+                return Ok((existing, notices));
             }
-            Some(new_releases) => {
+            Some((new_releases, notices)) => {
                 pb.finish_and_clear();
                 let count = new_releases.len();
                 println!("{count} new release(s) found");
                 let mut merged = new_releases;
                 merged.extend(existing);
-                return Ok(merged);
+                return Ok((merged, notices));
             }
             None => {
                 debug!("incremental fetch not possible, performing full refresh");
@@ -141,20 +172,22 @@ async fn fetch_pbs_releases(
 async fn fetch_incremental<F, Fut>(
     fetch_page: &F,
     existing: &[Release],
-) -> Result<Option<Vec<Release>>>
+) -> Result<Option<(Vec<Release>, Vec<Notice>)>>
 where
     F: Fn(usize) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<Vec<Release>>> + Send,
+    Fut: Future<Output = Result<(Vec<Release>, Vec<Notice>)>> + Send,
 {
     let Some(known_newest) = existing.first().map(|r| &r.tag_name) else {
         return Ok(None);
     };
 
     let mut new_releases: Vec<Release> = Vec::new();
+    let mut all_notices: Vec<Notice> = Vec::new();
     let mut page = 1usize;
     loop {
         debug!("incremental: fetching page {page}");
-        let page_releases: Vec<Release> = fetch_page(page).await?;
+        let (page_releases, notices): (Vec<Release>, _) = fetch_page(page).await?;
+        all_notices.extend(notices);
         let n = page_releases.len();
 
         if let Some(i) = page_releases
@@ -162,7 +195,7 @@ where
             .position(|r| r.tag_name == *known_newest)
         {
             new_releases.extend(page_releases.into_iter().take(i));
-            return Ok(Some(new_releases));
+            return Ok(Some((new_releases, all_notices)));
         }
 
         new_releases.extend(page_releases);
@@ -175,16 +208,18 @@ where
 }
 
 /// Paginate the releases endpoint until upstream returns a partial page.
-async fn fetch_all<F, Fut>(fetch_page: &F) -> Result<Vec<Release>>
+async fn fetch_all<F, Fut>(fetch_page: &F) -> Result<(Vec<Release>, Vec<Notice>)>
 where
     F: Fn(usize) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<Vec<Release>>> + Send,
+    Fut: Future<Output = Result<(Vec<Release>, Vec<Notice>)>> + Send,
 {
     let mut all = Vec::new();
+    let mut all_notices = Vec::new();
     let mut page = 1usize;
     loop {
         debug!("fetching releases page {page}");
-        let page_releases: Vec<Release> = fetch_page(page).await?;
+        let (page_releases, notices): (Vec<Release>, _) = fetch_page(page).await?;
+        all_notices.extend(notices);
         let n = page_releases.len();
         all.extend(page_releases);
         if n < PER_PAGE {
@@ -192,14 +227,14 @@ where
         }
         page += 1;
     }
-    Ok(all)
+    Ok((all, all_notices))
 }
 
 /// Fetch `releases/latest` from `rcook/pydl`. Filters drafts at write time
 /// so consumers (i.e. `self-update` reading the snapshot) don't have to.
-async fn fetch_latest_pydl_stable(client: &CachingClient) -> Result<PydlRelease> {
+async fn fetch_latest_pydl_stable(client: &CachingClient) -> Result<(PydlRelease, Vec<Notice>)> {
     let url = format!("https://api.github.com/repos/{SELF_OWNER}/{SELF_REPO}/releases/latest");
-    let (status, body) = client.request(Method::GET, &url).await?;
+    let (status, body, notices) = client.request(Method::GET, &url).await?;
     if status != StatusCode::OK {
         bail!(
             "GET {url} returned {status}: {}",
@@ -215,7 +250,7 @@ async fn fetch_latest_pydl_stable(client: &CachingClient) -> Result<PydlRelease>
     if api.draft {
         bail!("`releases/latest` returned a draft release — refusing to snapshot");
     }
-    Ok(api.into_pydl_release())
+    Ok((api.into_pydl_release(), notices))
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -266,15 +301,16 @@ mod tests {
 
     /// Build a page-fetcher backed by pre-canned pages. Each inner `Vec` is
     /// one page of releases; page indices are 1-based.
+    #[allow(clippy::type_complexity)]
     fn make_fetcher(
         pages: Vec<Vec<Release>>,
-    ) -> impl Fn(usize) -> futures_util::future::Ready<Result<Vec<Release>>> {
+    ) -> impl Fn(usize) -> futures_util::future::Ready<Result<(Vec<Release>, Vec<Notice>)>> {
         move |page: usize| {
             let result = pages
                 .get(page.saturating_sub(1))
                 .cloned()
                 .unwrap_or_default();
-            futures_util::future::ready(Ok(result))
+            futures_util::future::ready(Ok((result, vec![])))
         }
     }
 
@@ -285,7 +321,8 @@ mod tests {
         let fetcher = make_fetcher(pages);
 
         let result = fetch_incremental(&fetcher, &existing).await.unwrap();
-        assert_eq!(result, Some(vec![]));
+        let (new, _) = result.expect("should return Some for up-to-date");
+        assert!(new.is_empty());
     }
 
     #[tokio::test]
@@ -300,7 +337,7 @@ mod tests {
         let fetcher = make_fetcher(pages);
 
         let result = fetch_incremental(&fetcher, &existing).await.unwrap();
-        let new = result.expect("should find new releases");
+        let (new, _) = result.expect("should find new releases");
         assert_eq!(new.len(), 2);
         assert_eq!(new[0].tag_name, "20260515");
         assert_eq!(new[1].tag_name, "20260512");
@@ -318,7 +355,7 @@ mod tests {
         let fetcher = make_fetcher(vec![page1.clone(), page2]);
 
         let result = fetch_incremental(&fetcher, &existing).await.unwrap();
-        let new = result.expect("should find new releases");
+        let (new, _) = result.expect("should find new releases");
         assert_eq!(new.len(), PER_PAGE + 1);
         assert_eq!(new.last().unwrap().tag_name, "20260520");
     }
@@ -352,7 +389,7 @@ mod tests {
         let expected_len = page1.len() + page2.len();
         let fetcher = make_fetcher(vec![page1, page2]);
 
-        let all = fetch_all(&fetcher).await.unwrap();
+        let (all, _) = fetch_all(&fetcher).await.unwrap();
         assert_eq!(all.len(), expected_len);
     }
 }

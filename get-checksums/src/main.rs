@@ -31,7 +31,7 @@ struct Cli {
 
 async fn download_checksums(client: &CachingClient, tag: &str, out_path: &Path) -> Result<bool> {
     let url = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/SHA256SUMS");
-    let (status, body) = client.request(Method::GET, &url).await?;
+    let (status, body, _) = client.request(Method::GET, &url).await?;
     if status != StatusCode::OK {
         warn!("{tag}: {url} returned {status}, skipping");
         return Ok(false);
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     let mut missing = 0usize;
     loop {
         debug!("fetching releases page {page}");
-        let releases: Vec<Release> = fetch_releases_page(&client, page, PER_PAGE).await?;
+        let (releases, _): (Vec<Release>, _) = fetch_releases_page(&client, page, PER_PAGE).await?;
         let got = releases.len();
         for release in &releases {
             total += 1;
